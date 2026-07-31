@@ -64,16 +64,62 @@ Unicode の論理・数学記号は入力しやすいとは限りませんが、
 
 ## 現在使える構文
 
-定義には `≔`（または ASCII の `:=`）を使います。
+### 定義
+
+定義には `≔`（または ASCII の `:=`）を使います。定義名には英字、数字、アンダースコアを使えます。
 
 ```logos
 answer ≔ 42
-pi_value ≔ π
+answer_copy := 42
 square ≔ α²
 cube ≔ α³
 ```
 
-現在のコンパイラは、四則演算、べき乗（`^`、`²`、`³`）、平方根（`√`）、円周率（`π`）、無限大（`∞`）、括弧、プロパティ参照（`α.x`）、添字アクセス（`α[0]`）を扱えます。`∞` は JavaScript の `Infinity` に変換されます。
+### 数学定数
+
+`π` と `∞` は組み込みの数学定数です。JavaScript ではそれぞれ `Math.PI` と `Infinity` に変換されます。
+
+```logos
+circle_ratio ≔ π
+unbounded ≔ ∞
+limit ≔ ∞ - 1
+```
+
+```js
+const circle_ratio = Math.PI;
+const unbounded = Infinity;
+const limit = (Infinity - 1);
+```
+
+### 式
+
+現在は次の式を使えます。
+
+| Logos | 用途 |
+| --- | --- |
+| `+` `-` `*` `/` | 四則演算 |
+| `^` `²` `³` | べき乗 |
+| `√` | 平方根 |
+| `()` | 優先順位の指定 |
+| `α.x` | プロパティ参照 |
+| `α[0]` | 添字アクセス |
+
+### コマンドライン
+
+`.logos` ファイルは CLI で JavaScript にコンパイルできます。出力先を指定しない場合は、生成結果を標準出力に表示します。
+
+```sh
+zx src/cli.js example/index.logos
+zx src/cli.js example/index.logos --output example/index.js
+```
+
+利用できるオプションは次のとおりです。
+
+| オプション | 内容 |
+| --- | --- |
+| `--output`, `-o` | 生成した JavaScript の保存先 |
+| `--verbose`, `-v` | トークン、AST、生成 JavaScript を表示 |
+| `--help`, `-h` | ヘルプを表示 |
 
 ## 今後の構想
 
