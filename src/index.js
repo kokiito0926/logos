@@ -45,6 +45,13 @@ export class Lexer {
 				continue;
 			}
 
+			// ∞ is a mathematical constant
+			if (char === "∞") {
+				this.advance();
+				tokens.push({ type: "INFINITY", value: "∞" });
+				continue;
+			}
+
 			// Numbers
 			if (/\d/.test(char)) {
 				let num = "";
@@ -272,6 +279,11 @@ export class Parser {
 			return { type: "Constant", name: "π" };
 		}
 
+		if (token.type === "INFINITY") {
+			this.advance();
+			return { type: "Constant", name: "∞" };
+		}
+
 		if (token.type === "SQRT") {
 			this.advance();
 			const arg = this.parsePrimary();
@@ -336,6 +348,7 @@ export class Generator {
 
 		if (expr.type === "Constant") {
 			if (expr.name === "π") return "Math.PI";
+			if (expr.name === "∞") return "Infinity";
 			throw new Error(`Unknown constant: ${expr.name}`);
 		}
 

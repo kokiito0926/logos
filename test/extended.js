@@ -103,6 +103,11 @@ test(
   `tau ≔ 2 * π`,
   /const tau = .*Math\.PI/
 );
+test(
+  '4.3: ∞定数',
+  `unbounded ≔ ∞`,
+  /const unbounded = Infinity;/
+);
 
 console.log('\n▶ Test Group: べき乗表記 (Power Notation)');
 test(
