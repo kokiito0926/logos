@@ -1,0 +1,27 @@
+{
+	"name": "@kokiito0926/logos",
+	"version": "0.0.0",
+	"private": false,
+	"description": "",
+	"keywords": [],
+	"homepage": "https://github.com/kokiito0926/logos#readme",
+	"publishConfig": {
+		"access": "public"
+	},
+	"bugs": {
+		"url": "https://github.com/kokiito0926/logos/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/kokiito0926/logos.git"
+	},
+	"license": "MIT",
+	"author": "Koki Ito <kokiito0926@gmail.com>",
+	"type": "module",
+	"scripts": {
+		"test": "node --test"
+	},
+	"engines": {
+		"node": ">=24.0.0"
+	}
+}
