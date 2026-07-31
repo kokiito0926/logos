@@ -91,6 +91,27 @@ test(
   /const getNestedX = α => α\.point\.x;/
 );
 
+console.log('\n▶ Test Group: 比較演算子 (Comparison Operators)');
+test(
+  '3.4: 等価比較',
+  `same ≔ α = β`,
+  /const same = \(α, β\) => \(α === β\);/
+);
+test(
+  '3.5: 非等価比較',
+  `different ≔ α ≠ β`,
+  /const different = \(α, β\) => \(α !== β\);/
+);
+test(
+  '3.6: 大小比較',
+  `withinLimit ≔ α ≤ 10`,
+  /const withinLimit = α => \(α <= 10\);/
+);
+test(
+  '3.7: 優先順位',
+  `adult ≔ α.age + 1 ≥ β * 2`,
+  /const adult = \(α, β\) => \(\(α.age \+ 1\) >= \(β \* 2\)\);/
+);
 console.log('\n▶ Test Group: 数学関数 (Math Functions)');
 test(
   '4.1: 平方根関数',

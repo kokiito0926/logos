@@ -187,7 +187,27 @@ export class Parser {
 	}
 
 	parseExpression() {
-		return this.parseAdditive();
+		return this.parseComparison();
+	}
+
+	parseComparison() {
+		let left = this.parseAdditive();
+		const operatorMap = {
+			EQ: "===",
+			NEQ: "!==",
+			LT: "<",
+			GT: ">",
+			LTE: "<=",
+			GTE: ">=",
+		};
+
+		while (this.match("EQ", "NEQ", "LT", "GT", "LTE", "GTE")) {
+			const token = this.advance();
+			const right = this.parseAdditive();
+			left = { type: "BinaryOp", op: operatorMap[token.type], left, right };
+		}
+
+		return left;
 	}
 
 	parseAdditive() {
