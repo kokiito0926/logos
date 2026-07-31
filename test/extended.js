@@ -112,6 +112,27 @@ test(
   `adult ≔ α.age + 1 ≥ β * 2`,
   /const adult = \(α, β\) => \(\(α.age \+ 1\) >= \(β \* 2\)\);/
 );
+console.log('\n▶ Test Group: 論理演算子 (Logical Operators)');
+test(
+  '3.8: 否定',
+  `allowed ≔ ¬α.banned`,
+  /const allowed = α => \(!α\.banned\);/
+);
+test(
+  '3.9: 論理積',
+  `allowed ≔ α.active ∧ β.verified`,
+  /const allowed = \(α, β\) => \(α\.active && β\.verified\);/
+);
+test(
+  '3.10: 論理和',
+  `visible ≔ α.public ∨ α.owner = β`,
+  /const visible = \(α, β\) => \(α\.public \|\| \(α\.owner === β\)\);/
+);
+test(
+  '3.11: 論理演算子の優先順位',
+  `allowed ≔ ¬α.banned ∧ β.admin ∨ γ.override`,
+  /const allowed = \(α, β, γ\) => \(\(\(!α\.banned\) && β\.admin\) \|\| γ\.override\);/
+);
 console.log('\n▶ Test Group: 数学関数 (Math Functions)');
 test(
   '4.1: 平方根関数',

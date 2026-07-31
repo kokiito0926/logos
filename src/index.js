@@ -187,7 +187,31 @@ export class Parser {
 	}
 
 	parseExpression() {
-		return this.parseComparison();
+		return this.parseLogicalOr();
+	}
+
+	parseLogicalOr() {
+		let left = this.parseLogicalAnd();
+
+		while (this.match("OR")) {
+			this.advance();
+			const right = this.parseLogicalAnd();
+			left = { type: "BinaryOp", op: "||", left, right };
+		}
+
+		return left;
+	}
+
+	parseLogicalAnd() {
+		let left = this.parseComparison();
+
+		while (this.match("AND")) {
+			this.advance();
+			const right = this.parseComparison();
+			left = { type: "BinaryOp", op: "&&", left, right };
+		}
+
+		return left;
 	}
 
 	parseComparison() {
@@ -223,15 +247,24 @@ export class Parser {
 	}
 
 	parseMultiplicative() {
-		let left = this.parseExponentiation();
+		let left = this.parseUnary();
 
 		while (this.match("MUL", "DIV")) {
 			const op = this.advance().value;
-			const right = this.parseExponentiation();
+			const right = this.parseUnary();
 			left = { type: "BinaryOp", op, left, right };
 		}
 
 		return left;
+	}
+
+	parseUnary() {
+		if (this.match("NOT")) {
+			this.advance();
+			return { type: "UnaryOp", op: "!", argument: this.parseUnary() };
+		}
+
+		return this.parseExponentiation();
 	}
 
 	parseExponentiation() {
@@ -372,6 +405,10 @@ export class Generator {
 			throw new Error(`Unknown constant: ${expr.name}`);
 		}
 
+		if (expr.type === "UnaryOp") {
+			return `(!${this.generateExpression(expr.argument)})`;
+		}
+
 		if (expr.type === "BinaryOp") {
 			const left = this.generateExpression(expr.left);
 			const right = this.generateExpression(expr.right);
@@ -405,6 +442,8 @@ export class Generator {
 
 		if (expr.type === "Variable" && greekLetters.test(expr.name)) {
 			this.usedImplicitVars.add(expr.name);
+		} else if (expr.type === "UnaryOp") {
+			this.collectImplicitVars(expr.argument);
 		} else if (expr.type === "BinaryOp") {
 			this.collectImplicitVars(expr.left);
 			this.collectImplicitVars(expr.right);
