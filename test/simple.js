@@ -1,4 +1,4 @@
-import { LogosCompiler } from "../src/logos.js";
+import { LogosCompiler } from "../src/index.js";
 
 console.log("\n========== Test 1: Simple function ==========");
 const code1 = `square ≔ α²`;

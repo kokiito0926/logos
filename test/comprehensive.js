@@ -1,4 +1,4 @@
-import { LogosCompiler } from '../src/logos.js';
+import { LogosCompiler } from '../src/index.js';
 
 function test(name, code, expectedPattern) {
   console.log(`\n========== ${name} ==========`);
