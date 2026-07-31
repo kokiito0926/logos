@@ -6,7 +6,7 @@ import { LogosCompiler } from "./index.js";
 
 if (argv.help || argv.h) {
 	echo(`
-Usage: zx src/cli.zx.js <input-file> [options]
+Usage: zx src/cli.js <input-file> [options]
 
 Options:
   --output, -o <file>  Save output to a file (default: stdout)
@@ -14,8 +14,8 @@ Options:
   --help, -h           Show this help message
 
 Examples:
-  zx src/cli.zx.js program.logos
-  zx src/cli.zx.js program.logos --output program.js
+  zx src/cli.js program.logos
+  zx src/cli.js program.logos --output program.js
 `);
 	process.exit(0);
 }
@@ -54,7 +54,7 @@ try {
 	echo("─".repeat(60));
 	echo(jsCode);
 	echo("─".repeat(60));
-	echo(`To save output: zx src/cli.zx.js ${input} -o ${defaultOutput}`);
+	echo(`To save output: zx src/cli.js ${input} -o ${defaultOutput}`);
 	process.exit(0);
 } catch (error) {
 	console.error(`Error: Compilation error: ${error.message}`);
