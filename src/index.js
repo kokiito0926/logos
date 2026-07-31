@@ -3,11 +3,7 @@
  * Minimal implementation with Lexer, Parser, and JavaScript Generator
  */
 
-// ============================================================================
-// LEXER
-// ============================================================================
-
-class Lexer {
+export class Lexer {
 	constructor(input) {
 		this.input = input;
 		this.pos = 0;
@@ -130,11 +126,7 @@ class Lexer {
 	}
 }
 
-// ============================================================================
-// PARSER
-// ============================================================================
-
-class Parser {
+export class Parser {
 	constructor(tokens) {
 		this.tokens = tokens;
 		this.pos = 0;
@@ -297,11 +289,7 @@ class Parser {
 	}
 }
 
-// ============================================================================
-// GENERATOR
-// ============================================================================
-
-class Generator {
+export class Generator {
 	constructor(ast) {
 		this.ast = ast;
 		this.usedImplicitVars = new Set();
@@ -398,11 +386,7 @@ class Generator {
 	}
 }
 
-// ============================================================================
-// COMPILER (Main Interface)
-// ============================================================================
-
-class LogosCompiler {
+export class LogosCompiler {
 	compile(code, verbose = false) {
 		// Step 1: Lexing
 		const lexer = new Lexer(code);
@@ -422,9 +406,3 @@ class LogosCompiler {
 		return jsCode;
 	}
 }
-
-// ============================================================================
-// EXPORTS
-// ============================================================================
-
-export { Lexer, Parser, Generator, LogosCompiler };
