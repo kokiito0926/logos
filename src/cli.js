@@ -1,184 +1,72 @@
 #!/usr/bin/env node
 
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+import path from "node:path";
+import { argv, echo, fs } from "zx";
 import { LogosCompiler } from "./index.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// ============================================================================
-// CLI Helper Functions
-// ============================================================================
-
-function printUsage() {
-	console.log(`
-╔══════════════════════════════════════════════════════════╗
-║           LOGOS Language - Compiler CLI                 ║
-╚══════════════════════════════════════════════════════════╝
-
-Usage: logos-cli <input-file> [options]
+function main() {
+	if (argv.help || argv.h) {
+		echo(`
+Usage: zx src/cli.zx.js <input-file> [options]
 
 Options:
-  --output, -o <file>   Save output to file (default: stdout)
-  --verbose, -v         Show detailed compilation info
+  --output, -o <file>  Save output to a file (default: stdout)
+  --verbose, -v        Show tokens, AST, and generated JavaScript
   --help, -h           Show this help message
 
 Examples:
-  logos-cli program.logos
-  logos-cli program.logos --output program.js
-  logos-cli program.logos -o program.js -v
-  `);
-}
-
-function parseArgs(args) {
-	const options = {
-		input: null,
-		output: null,
-		verbose: false,
-	};
-
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
-
-		if (arg === "--help" || arg === "-h") {
-			printUsage();
-			process.exit(0);
-		} else if (arg === "--verbose" || arg === "-v") {
-			options.verbose = true;
-		} else if (arg === "--output" || arg === "-o") {
-			if (i + 1 < args.length) {
-				options.output = args[++i];
-			} else {
-				console.error("Error: --output requires a file path");
-				process.exit(1);
-			}
-		} else if (!arg.startsWith("-")) {
-			if (!options.input) {
-				options.input = arg;
-			}
-		}
+  zx src/cli.zx.js program.logos
+  zx src/cli.zx.js program.logos --output program.js
+`);
+		return;
 	}
 
-	return options;
-}
+	const input = argv._[0];
+	const output = argv.output ?? argv.o;
+	const verbose = Boolean(argv.verbose ?? argv.v);
 
-function readFile(filePath) {
-	try {
-		return fs.readFileSync(filePath, "utf8");
-	} catch (error) {
-		console.error(`Error reading file: ${filePath}`);
-		console.error(`  ${error.message}`);
-		process.exit(1);
-	}
-}
-
-function writeFile(filePath, content) {
-	try {
-		fs.writeFileSync(filePath, content, "utf8");
-		console.log(`✓ Output written to: ${filePath}`);
-	} catch (error) {
-		console.error(`Error writing file: ${filePath}`);
-		console.error(`  ${error.message}`);
-		process.exit(1);
-	}
-}
-
-function getFileInfo(filePath) {
-	const ext = path.extname(filePath);
-	const name = path.basename(filePath, ext);
-	const dir = path.dirname(filePath);
-
-	return {
-		original: filePath,
-		name,
-		dir,
-		output: path.join(dir, `${name}.js`),
-	};
-}
-
-// ============================================================================
-// Main CLI Logic
-// ============================================================================
-
-function main() {
-	const args = process.argv.slice(2);
-
-	if (args.length === 0) {
-		printUsage();
-		process.exit(0);
+	if (!input) {
+		console.error("Error: Input file required. Run with --help for usage information.");
+		process.exitCode = 1;
+		return;
 	}
 
-	const options = parseArgs(args);
-
-	if (!options.input) {
-		console.error("Error: Input file required");
-		console.error("Run with --help for usage information");
-		process.exit(1);
+	if (!input.endsWith(".logos")) {
+		console.error("Error: Input file must have a .logos extension.");
+		process.exitCode = 1;
+		return;
 	}
 
-	// Validate file exists
-	if (!fs.existsSync(options.input)) {
-		console.error(`Error: File not found: ${options.input}`);
-		process.exit(1);
-	}
-
-	// Validate file extension
-	if (!options.input.endsWith(".logos")) {
-		console.error(`Error: Input file must have .logos extension`);
-		process.exit(1);
+	if (!fs.existsSync(input)) {
+		console.error(`Error: File not found: ${input}`);
+		process.exitCode = 1;
+		return;
 	}
 
 	try {
-		// Read input file
-		const code = readFile(options.input);
+		const code = fs.readFileSync(input, "utf8");
+		const jsCode = new LogosCompiler().compile(code, verbose);
+		const defaultOutput = path.join(
+			path.dirname(input),
+			`${path.basename(input, path.extname(input))}.js`,
+		);
 
-		if (options.verbose) {
-			console.log(`📄 Input file: ${options.input}`);
-			console.log(`📝 File size: ${code.length} bytes`);
-			console.log(`\n▶ Compiling...`);
+		if (output) {
+			fs.outputFileSync(output, jsCode, "utf8");
+			echo(`Output written to: ${output}`);
+			return;
 		}
 
-		// Compile
-		const compiler = new LogosCompiler();
-		const jsCode = compiler.compile(code, options.verbose);
-
-		if (options.verbose) {
-			console.log(`\n✓ Compilation successful!`);
-			console.log(`📦 Output size: ${jsCode.length} bytes`);
-		}
-
-		// Output
-		const fileInfo = getFileInfo(options.input);
-		const outputPath = options.output || fileInfo.output;
-
-		if (options.output) {
-			// Write to specified file
-			writeFile(outputPath, jsCode);
-		} else {
-			// Check if default output file would overwrite
-			if (fs.existsSync(outputPath)) {
-				console.log(`📝 Generated JavaScript (would save to: ${outputPath}):`);
-			} else {
-				console.log(`📝 Generated JavaScript:`);
-			}
-			console.log("─".repeat(60));
-			console.log(jsCode);
-			console.log("─".repeat(60));
-			console.log(`\nTo save output: logos-cli ${options.input} -o ${outputPath}`);
-		}
+		echo(`Generated JavaScript${fs.existsSync(defaultOutput) ? ` (would save to: ${defaultOutput})` : ""}:`);
+		echo("─".repeat(60));
+		echo(jsCode);
+		echo("─".repeat(60));
+		echo(`To save output: zx src/cli.zx.js ${input} -o ${defaultOutput}`);
 	} catch (error) {
-		console.error("\n❌ Compilation error:");
-		console.error(`  ${error.message}`);
-		if (options.verbose) {
-			console.error(`\nStack trace:\n${error.stack}`);
-		}
-		process.exit(1);
+		console.error(`Error: Compilation error: ${error.message}`);
+		process.exitCode = 1;
+		if (verbose && error.stack) console.error(error.stack);
 	}
 }
-
-// ============================================================================
-// Entry Point
-// ============================================================================
 
 main();
