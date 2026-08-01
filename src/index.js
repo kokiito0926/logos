@@ -150,6 +150,10 @@ export class Lexer {
 				"⊕": "XOR",
 				"≡": "CONGRUENT",
 				"≈": "APPROX",
+				"←": "ASSIGN_RE",
+				"↦": "MAPSTO",
+				"→": "ARROW",
+				"∘": "COMPOSE",
 			};
 
 			if (symbolMap[char]) {
@@ -246,6 +250,62 @@ export class Parser {
 	}
 
 	parseExpression() {
+		return this.parseAssignment();
+	}
+
+	parseAssignment() {
+		let left = this.parseArrow();
+
+		if (this.match("ASSIGN_RE")) {
+			this.advance();
+			const right = this.parseAssignment();
+			return { type: "BinaryOp", op: "=", left, right };
+		}
+
+		return left;
+	}
+
+	parseArrow() {
+		// Single param arrow: ident ↦ expr or ident → expr
+		if (this.match("IDENT") && this.peek(1) && (this.peek(1).type === "MAPSTO" || this.peek(1).type === "ARROW")) {
+			const param = this.advance().value;
+			this.advance(); // consume ↦ or →
+			const body = this.parseArrow();
+			return { type: "ArrowFunction", params: [param], body };
+		}
+
+		// Multi param arrow: (a, b) ↦ expr
+		if (this.match("LPAREN")) {
+			let isArrow = false;
+			let i = 1;
+			while (this.pos + i < this.tokens.length) {
+				const t = this.tokens[this.pos + i];
+				if (t.type === "RPAREN") {
+					const next = this.tokens[this.pos + i + 1];
+					if (next && (next.type === "MAPSTO" || next.type === "ARROW")) {
+						isArrow = true;
+					}
+					break;
+				}
+				i++;
+			}
+			if (isArrow) {
+				this.advance(); // LPAREN
+				const params = [];
+				if (!this.match("RPAREN")) {
+					params.push(this.expect("IDENT").value);
+					while (this.match("COMMA")) {
+						this.advance();
+						params.push(this.expect("IDENT").value);
+					}
+				}
+				this.expect("RPAREN");
+				this.advance(); // MAPSTO or ARROW
+				const body = this.parseArrow();
+				return { type: "ArrowFunction", params, body };
+			}
+		}
+
 		return this.parseImplies();
 	}
 
@@ -354,7 +414,7 @@ export class Parser {
 	}
 
 	parseExponentiation() {
-		let left = this.parsePostfix();
+		let left = this.parseCompose();
 
 		while (this.match("POW", "SQ", "CUB")) {
 			const token = this.advance();
@@ -369,6 +429,18 @@ export class Parser {
 			}
 
 			left = { type: "BinaryOp", op: "**", left, right };
+		}
+
+		return left;
+	}
+
+	parseCompose() {
+		let left = this.parsePostfix();
+
+		while (this.match("COMPOSE")) {
+			this.advance();
+			const right = this.parsePostfix();
+			left = { type: "BinaryOp", op: "∘", left, right };
 		}
 
 		return left;
@@ -470,6 +542,13 @@ export class Generator {
 		if (stmt.type === "Definition") {
 			// Reset usedImplicitVars for this statement
 			this.usedImplicitVars = new Set();
+			
+			// If value is explicitly an ArrowFunction, don't generate implicit wrapper
+			if (stmt.value && stmt.value.type === "ArrowFunction") {
+				const arrowStr = this.generateExpression(stmt.value);
+				return `const ${stmt.name} = ${arrowStr};`;
+			}
+
 			// Handle block-style values
 			if (stmt.value && stmt.value.type === "Block") {
 				// collect implicit vars from inner defs and final expr
@@ -532,6 +611,12 @@ export class Generator {
 			throw new Error(`Unknown constant: ${expr.name}`);
 		}
 
+		if (expr.type === "ArrowFunction") {
+			const paramsStr = expr.params.length === 1 ? expr.params[0] : `(${expr.params.join(", ")})`;
+			const bodyStr = this.generateExpression(expr.body);
+			return `${paramsStr} => ${bodyStr}`;
+		}
+
 		if (expr.type === "UnaryOp") {
 			return `(!${this.generateExpression(expr.argument)})`;
 		}
@@ -550,6 +635,9 @@ export class Generator {
 			}
 			if (expr.op === "≈") {
 				return `almostEqual(${left}, ${right})`;
+			}
+			if (expr.op === "∘") {
+				return `((...args) => ${left}(${right}(...args)))`;
 			}
 			return `(${left} ${expr.op} ${right})`;
 		}
@@ -581,6 +669,16 @@ export class Generator {
 
 		if (expr.type === "Variable" && greekLetters.test(expr.name)) {
 			this.usedImplicitVars.add(expr.name);
+		} else if (expr.type === "ArrowFunction") {
+			// Do not collect params as implicit vars
+			const localUsed = new Set();
+			const tempGen = new Generator({ body: [] });
+			tempGen.collectImplicitVars(expr.body);
+			tempGen.usedImplicitVars.forEach(v => {
+				if (!expr.params.includes(v)) {
+					this.usedImplicitVars.add(v);
+				}
+			});
 		} else if (expr.type === "UnaryOp") {
 			this.collectImplicitVars(expr.argument);
 		} else if (expr.type === "BinaryOp") {

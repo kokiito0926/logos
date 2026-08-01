@@ -244,6 +244,28 @@ test(
   /const approx = \(α, β\) => almostEqual\(α, β\);/
 );
 
+console.log('\n▶ Test Group: 星2機能 (Star-2 Features)');
+test(
+  '10.1: 代入演算子 (←)',
+  `assign_test ≔ α ← β`,
+  /const assign_test = \(α, β\) => \(α = β\);/
+);
+test(
+  '10.2: 単一引数マッピング (↦)',
+  `square_explicit ≔ x ↦ x²`,
+  /const square_explicit = x => \(x \*\* 2\);/
+);
+test(
+  '10.3: 複数引数マッピング ((a,b) ↦)',
+  `add_explicit ≔ (x, y) ↦ x + y`,
+  /const add_explicit = \(x, y\) => \(x \+ y\);/
+);
+test(
+  '10.4: 関数合成 (∘)',
+  `composed ≔ f ∘ g`,
+  /const composed = \(\(\.\.\.args\) => f\(g\(\.\.\.args\)\)\);/
+);
+
 console.log('\n▶ Test Group: エラーケース (Error Cases)');
 test(
   '8.1: 不正な文字 (should fail)',
@@ -255,3 +277,4 @@ test(
 console.log('\n╔════════════════════════════════════════════════════════╗');
 console.log('║                   TEST COMPLETED                       ║');
 console.log('╚════════════════════════════════════════════════════════╝');
+
