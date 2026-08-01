@@ -141,6 +141,8 @@ zx src/cli.js example/index.logos --output example/index.js
 | `--verbose`, `-v` | トークン、AST、生成 JavaScript を表示 |
 | `--help`, `-h` | ヘルプを表示 |
 
+***
+
 ## 今後の構想
 
 以下はメモに記載されている機能拡張・仕様案であり、現在のコンパイラではまだ利用できません。
@@ -180,6 +182,72 @@ zx src/cli.js example/index.logos --output example/index.js
 - **Unicode数学スタイルの識別子**: 太字 (`𝐀`, `𝐱`)、イタリック (`𝑓`, `𝑥`)、筆記体 (`𝒜`, `𝒳`)、フラクトゥール (`𝔄`, `𝔅`) 等をそのまま識別子としてサポート
 - **型注釈構想 (TypeScript等へのコンパイル)**: 黒板太字 (`ℕ`, `ℤ`, `ℝ`, `ℂ`) を型注釈として利用 (例: `age : ℕ`)
 - **微積分記号の活用**: `∂`, `∇`, `∫`, `∮`
+
+### 5. パイプライン演算子
+
+```logos
+numbers |> filter(isPrime) |> map(square) |> sum
+```
+
+```javascript
+sum(map(filter(numbers, isPrime), square))
+```
+
+### 6. 範囲（Range）
+
+```logos
+1‥10
+```
+
+```logos
+0‥<n
+```
+
+```logos
+a‥b
+```
+
+```javascript
+range(1, 10)
+```
+
+### 7. チェーン比較
+
+```logos
+0 ≤ α ≤ 10
+```
+
+```javascript
+0 <= α && α <= 10
+```
+
+***
+
+## 修正案
+
+### 下付き添字を添字アクセスとして扱う
+
+現在は、Unicode の下付き添字を識別子の一部として扱っています。
+
+```logos
+x₀ + x₁
+```
+
+```javascript
+x_0 + x_1
+```
+
+しかし、数学では下付き添字は配列やベクトル、行列などの要素を表すことが多いため、添字アクセスとして扱うほうが自然であると考えています。
+
+例えば、次のように変換する案を検討しています。
+
+```logos
+x₀ + x₁
+```
+
+```javascript
+x[0] + x[1]
+```
 
 ***
 
