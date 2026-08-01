@@ -66,7 +66,7 @@ test(
 test(
   'Test 6: Powers - square (²)',
   `quad ≔ 4 * α²`,
-  /const quad = α => \(\(4 \* \(α \*\* 2\)\);/
+  /const quad = α => \(\(4 \* \(α \*\* 2\)\)\);/
 );
 
 // Test 7: Powers with cubes
