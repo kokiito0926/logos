@@ -202,6 +202,48 @@ test(
   /const getAt = \(α, β\) => α\[β\];/
 );
 
+console.log('\n▶ Test Group: 新規演算子・リテラル (Star-1 Features)');
+test(
+  '9.1: 真偽値リテラル (⊤, ⊥)',
+  `t_val ≔ ⊤`,
+  /const t_val = true;/
+);
+test(
+  '9.2: 偽リテラル (⊥)',
+  `f_val ≔ ⊥`,
+  /const f_val = false;/
+);
+test(
+  '9.3: 空集合 (∅)',
+  `empty_set ≔ ∅`,
+  /const empty_set = new Set\(\);/
+);
+test(
+  '9.4: 含意演算子 (⇒)',
+  `implies ≔ α ⇒ β`,
+  /const implies = \(α, β\) => \(!α \|\| β\);/
+);
+test(
+  '9.5: 同値演算子 (⇔)',
+  `equiv ≔ α ⇔ β`,
+  /const equiv = \(α, β\) => \(α === β\);/
+);
+test(
+  '9.6: 排他的論理和 (⊕)',
+  `xor_val ≔ α ⊕ β`,
+  /const xor_val = \(α, β\) => \(α !== β\);/
+);
+test(
+  '9.7: 合同演算子 (≡)',
+  `congruent ≔ α ≡ β`,
+  /const congruent = \(α, β\) => \(α === β\);/
+);
+test(
+  '9.8: 近似演算子 (≈)',
+  `approx ≔ α ≈ β`,
+  /const approx = \(α, β\) => almostEqual\(α, β\);/
+);
+
 console.log('\n▶ Test Group: エラーケース (Error Cases)');
 test(
   '8.1: 不正な文字 (should fail)',

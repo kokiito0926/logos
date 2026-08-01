@@ -35,26 +35,29 @@ export class Lexer {
 				tokens.push({ type: "NEWLINE", value: "\n" });
 				continue;
 			}
-			if (this.peek() === '\n') {
+			if (this.peek() === '\n') {
 				this.advance();
 				tokens.push({ type: "NEWLINE", value: "\n" });
 				continue;
 			}
-				this.skipWhitespace();
+			this.skipWhitespace();
 			if (this.pos >= this.input.length) break;
-			// After skipping spaces, handle any newline characters that remained (e.g., blank lines)
-if (this.peek() === '\r') {
-	this.advance();
-	if (this.peek() === '\n') this.advance();
-	tokens.push({ type: "NEWLINE", value: "\n" });
-	continue;
-}
-			if (this.peek() === '\n') {
-	this.advance();
-	tokens.push({ type: "NEWLINE", value: "\n" });
-	continue;
-}
-			const char = this.peek();				// Greek letters				if (/[α-ω]/.test(char)) {
+			// After skipping spaces, handle any newline characters that remained (e.g., blank lines)
+			if (this.peek() === '\r') {
+				this.advance();
+				if (this.peek() === '\n') this.advance();
+				tokens.push({ type: "NEWLINE", value: "\n" });
+				continue;
+			}
+			if (this.peek() === '\n') {
+				this.advance();
+				tokens.push({ type: "NEWLINE", value: "\n" });
+				continue;
+			}
+			const char = this.peek();
+
+			// Greek letters
+			if (/[α-ω]/.test(char)) {
 				tokens.push({ type: "IDENT", value: this.advance() });
 				continue;
 			}
@@ -139,6 +142,14 @@ if (this.peek() === '\r') {
 				"∃": "EXISTS",
 				"∈": "IN",
 				"∉": "NOTIN",
+				"⊤": "TRUE",
+				"⊥": "FALSE",
+				"∅": "EMPTYSET",
+				"⇒": "IMPLIES",
+				"⇔": "EQUIV",
+				"⊕": "XOR",
+				"≡": "CONGRUENT",
+				"≈": "APPROX",
 			};
 
 			if (symbolMap[char]) {
@@ -192,15 +203,16 @@ export class Parser {
 
 	parseStatement() {
 		const token = this.peek();
-		if (token.type === "IDENT") {
+		if (token.type === "IDENT") {
 			const name = token.value;
 			this.advance();
-			if (this.match("ASSIGN")) {
+			if (this.match("ASSIGN")) {
 				this.advance(); // consume ≔
-				// Support block-style definitions:
+				// Support block-style definitions:
 				// name ≔\n  inner ≔ ...\n  inner2 ≔ ...\n\n  final_expr
 				if (this.match("NEWLINE")) {
-					// consume first newline					this.advance();
+					// consume first newline
+					this.advance();
 					const innerDefs = [];
 					// Parse inner definitions (IDENT ASSIGN expr) until an empty line separates final expression
 					while (this.match("IDENT") && this.peek(1) && this.peek(1).type === "ASSIGN") {
@@ -208,9 +220,11 @@ export class Parser {
 						this.advance(); // consume ASSIGN
 						const innerValue = this.parseExpression();
 						innerDefs.push({ type: "Definition", name: innerName, value: innerValue });
-						if (this.match("NEWLINE")) {
-							// consume newline after inner definition							this.advance();
-							// if next is another NEWLINE, consume and break (empty line)							if (this.match("NEWLINE")) {
+						if (this.match("NEWLINE")) {
+							// consume newline after inner definition
+							this.advance();
+							// if next is another NEWLINE, consume and break (empty line)
+							if (this.match("NEWLINE")) {
 								this.advance();
 								break;
 							} else {
@@ -220,7 +234,7 @@ export class Parser {
 							break;
 						}
 					}
-					const finalExpr = this.parseExpression();
+					const finalExpr = this.parseExpression();
 					return { type: "Definition", name, value: { type: "Block", body: innerDefs, expr: finalExpr } };
 				} else {
 					const value = this.parseExpression();
@@ -228,19 +242,45 @@ export class Parser {
 				}
 			}
 		}
-		throw new Error(`Unexpected token: ${token.type}`);	}
+		throw new Error(`Unexpected token: ${token.type}`);
+	}
 
 	parseExpression() {
-		return this.parseLogicalOr();
+		return this.parseImplies();
+	}
+
+	parseImplies() {
+		let left = this.parseEquiv();
+
+		while (this.match("IMPLIES")) {
+			this.advance();
+			const right = this.parseEquiv();
+			left = { type: "BinaryOp", op: "⇒", left, right };
+		}
+
+		return left;
+	}
+
+	parseEquiv() {
+		let left = this.parseLogicalOr();
+
+		while (this.match("EQUIV")) {
+			this.advance();
+			const right = this.parseLogicalOr();
+			left = { type: "BinaryOp", op: "⇔", left, right };
+		}
+
+		return left;
 	}
 
 	parseLogicalOr() {
 		let left = this.parseLogicalAnd();
 
-		while (this.match("OR")) {
-			this.advance();
+		while (this.match("OR", "XOR")) {
+			const token = this.advance();
 			const right = this.parseLogicalAnd();
-			left = { type: "BinaryOp", op: "||", left, right };
+			const op = token.type === "XOR" ? "⊕" : "||";
+			left = { type: "BinaryOp", op, left, right };
 		}
 
 		return left;
@@ -263,13 +303,15 @@ export class Parser {
 		const operatorMap = {
 			EQ: "===",
 			NEQ: "!==",
+			CONGRUENT: "===",
+			APPROX: "≈",
 			LT: "<",
 			GT: ">",
 			LTE: "<=",
 			GTE: ">=",
 		};
 
-		while (this.match("EQ", "NEQ", "LT", "GT", "LTE", "GTE")) {
+		while (this.match("EQ", "NEQ", "CONGRUENT", "APPROX", "LT", "GT", "LTE", "GTE")) {
 			const token = this.advance();
 			const right = this.parseAdditive();
 			left = { type: "BinaryOp", op: operatorMap[token.type], left, right };
@@ -361,6 +403,21 @@ export class Parser {
 			return { type: "Literal", value: token.value };
 		}
 
+		if (token.type === "TRUE") {
+			this.advance();
+			return { type: "Literal", value: true };
+		}
+
+		if (token.type === "FALSE") {
+			this.advance();
+			return { type: "Literal", value: false };
+		}
+
+		if (token.type === "EMPTYSET") {
+			this.advance();
+			return { type: "Constant", name: "∅" };
+		}
+
 		if (token.type === "IDENT") {
 			const value = token.value;
 			this.advance();
@@ -413,7 +470,8 @@ export class Generator {
 		if (stmt.type === "Definition") {
 			// Reset usedImplicitVars for this statement
 			this.usedImplicitVars = new Set();
-			// Handle block-style values			if (stmt.value && stmt.value.type === "Block") {
+			// Handle block-style values
+			if (stmt.value && stmt.value.type === "Block") {
 				// collect implicit vars from inner defs and final expr
 				stmt.value.body.forEach((d) => this.collectImplicitVars(d.value));
 				this.collectImplicitVars(stmt.value.expr);
@@ -421,11 +479,13 @@ export class Generator {
 				const innerNames = new Set(stmt.value.body.map((d) => d.name));
 				innerNames.forEach((n) => this.usedImplicitVars.delete(n));
 				const implicitArgs = Array.from(this.usedImplicitVars).sort();
-				// Try to inline inner defs into final expression for a single-expression arrow when safe				let finalExprStr = this.generateExpression(stmt.value.expr);				stmt.value.body.forEach((d) => {
+				// Try to inline inner defs into final expression for a single-expression arrow when safe
+				let finalExprStr = this.generateExpression(stmt.value.expr);
+				stmt.value.body.forEach((d) => {
 					const innerStr = this.generateExpression(d.value);
 					finalExprStr = finalExprStr.replace(new RegExp(`\\b${d.name}\\b`, 'g'), innerStr);
 				});
-				if (implicitArgs.length === 0) {
+				if (implicitArgs.length === 0) {
 					return `const ${stmt.name} = ${finalExprStr};`;
 				} else if (implicitArgs.length === 1) {
 					return `const ${stmt.name} = ${implicitArgs[0]} => ${finalExprStr};`;
@@ -441,7 +501,7 @@ export class Generator {
 				if (stmt.value && stmt.value.type === 'BinaryOp' && stmt.value.op === '*' && stmt.value.left && stmt.value.left.type === 'Literal' && stmt.value.right && stmt.value.right.type === 'BinaryOp' && stmt.value.right.op === '**') {
 					expr = `(${expr})`;
 				}
-				if (implicitArgs.length === 0) {
+				if (implicitArgs.length === 0) {
 					// No implicit args, simple constant
 					return `const ${stmt.name} = ${expr};`;
 				} else if (implicitArgs.length === 1) {
@@ -453,7 +513,7 @@ export class Generator {
 				}
 			}
 		}
-		throw new Error(`Unknown statement type: ${stmt.type}`);
+		throw new Error(`Unknown statement type: ${stmt.type}`);
 	}
 
 	generateExpression(expr) {
@@ -468,6 +528,7 @@ export class Generator {
 		if (expr.type === "Constant") {
 			if (expr.name === "π") return "Math.PI";
 			if (expr.name === "∞") return "Infinity";
+			if (expr.name === "∅") return "new Set()";
 			throw new Error(`Unknown constant: ${expr.name}`);
 		}
 
@@ -478,6 +539,18 @@ export class Generator {
 		if (expr.type === "BinaryOp") {
 			const left = this.generateExpression(expr.left);
 			const right = this.generateExpression(expr.right);
+			if (expr.op === "⇒") {
+				return `(!${left} || ${right})`;
+			}
+			if (expr.op === "⇔") {
+				return `(${left} === ${right})`;
+			}
+			if (expr.op === "⊕") {
+				return `(${left} !== ${right})`;
+			}
+			if (expr.op === "≈") {
+				return `almostEqual(${left}, ${right})`;
+			}
 			return `(${left} ${expr.op} ${right})`;
 		}
 
