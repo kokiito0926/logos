@@ -266,6 +266,28 @@ test(
   /const composed = \(\(\.\.\.args\) => f\(g\(\.\.\.args\)\)\);/
 );
 
+console.log('\n▶ Test Group: 下付き・上付き文字 (Subscripts & Superscripts)');
+test(
+  '11.1: 下付き添字の識別子 (x₀, x₁)',
+  `point ≔ x₀ + x₁`,
+  /const point = \(x_0 \+ x_1\);/
+);
+test(
+  '11.2: 暗黙引数付き下付き文字 (α₁, β₂)',
+  `dist_sub ≔ α₁ + β₂`,
+  /const dist_sub = \(α_1, β_2\) => \(α_1 \+ β_2\);/
+);
+test(
+  '11.3: 負の指数 (x⁻¹)',
+  `inverse ≔ α⁻¹`,
+  /const inverse = α => \(α \*\* -1\);/
+);
+test(
+  '11.4: 4乗・複数桁の指数 (α⁴, x¹⁰)',
+  `poly ≔ α⁴ + β¹⁰`,
+  /const poly = \(α, β\) => \(\(α \*\* 4\) \+ \(β \*\* 10\)\);/
+);
+
 console.log('\n▶ Test Group: エラーケース (Error Cases)');
 test(
   '8.1: 不正な文字 (should fail)',
@@ -277,4 +299,5 @@ test(
 console.log('\n╔════════════════════════════════════════════════════════╗');
 console.log('║                   TEST COMPLETED                       ║');
 console.log('╚════════════════════════════════════════════════════════╝');
+
 

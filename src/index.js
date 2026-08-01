@@ -3,6 +3,38 @@
  * Minimal implementation with Lexer, Parser, and JavaScript Generator
  */
 
+const SUBSCRIPT_MAP = {
+	"₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
+	"₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
+	"ₐ": "a", "ₑ": "e", "ₒ": "o", "ₓ": "x", "ₕ": "h",
+	"ₖ": "k", "ₗ": "l", "ₘ": "m", "ₙ": "n", "ₚ": "p",
+	"ₛ": "s", "ₜ": "t", "₋": "_", "₊": "+"
+};
+
+const SUPERSCRIPT_MAP = {
+	"⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+	"⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+	"⁻": "-", "⁺": "+"
+};
+
+function normalizeSubscriptIdentifier(ident) {
+	let result = "";
+	let inSub = false;
+	for (const char of ident) {
+		if (SUBSCRIPT_MAP[char]) {
+			if (!inSub) {
+				result += "_";
+				inSub = true;
+			}
+			result += SUBSCRIPT_MAP[char];
+		} else {
+			inSub = false;
+			result += char;
+		}
+	}
+	return result;
+}
+
 export class Lexer {
 	constructor(input) {
 		this.input = input;
@@ -56,9 +88,14 @@ export class Lexer {
 			}
 			const char = this.peek();
 
-			// Greek letters
-			if (/[α-ω]/.test(char)) {
-				tokens.push({ type: "IDENT", value: this.advance() });
+			// Superscript numbers / signs (e.g. ⁻¹, ⁴, ¹⁰)
+			if (/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]/.test(char)) {
+				let superStr = "";
+				while (this.pos < this.input.length && /[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]/.test(this.peek())) {
+					superStr += SUPERSCRIPT_MAP[this.advance()];
+				}
+				const val = parseFloat(superStr);
+				tokens.push({ type: "SUPERSCRIPT", value: val });
 				continue;
 			}
 
@@ -76,6 +113,17 @@ export class Lexer {
 				continue;
 			}
 
+			// Identifiers (including Greek letters, Latin letters, underscores, digits, and subscript characters)
+			if (/[a-zA-Z_α-ω]/.test(char)) {
+				let ident = "";
+				while (this.pos < this.input.length && /[a-zA-Z0-9_α-ω₀-₉ₐ-ₜ]/.test(this.peek())) {
+					ident += this.advance();
+				}
+				const normalized = normalizeSubscriptIdentifier(ident);
+				tokens.push({ type: "IDENT", value: normalized });
+				continue;
+			}
+
 			// Numbers
 			if (/\d/.test(char)) {
 				let num = "";
@@ -83,16 +131,6 @@ export class Lexer {
 					num += this.advance();
 				}
 				tokens.push({ type: "NUMBER", value: parseFloat(num) });
-				continue;
-			}
-
-			// Identifiers (regular)
-			if (/[a-zA-Z_]/.test(char)) {
-				let ident = "";
-				while (this.pos < this.input.length && /[a-zA-Z0-9_]/.test(this.peek())) {
-					ident += this.advance();
-				}
-				tokens.push({ type: "IDENT", value: ident });
 				continue;
 			}
 
@@ -126,8 +164,6 @@ export class Lexer {
 				",": "COMMA",
 				":": "COLON",
 				"√": "SQRT",
-				"²": "SQ",
-				"³": "CUB",
 				π: "PI",
 				"=": "EQ",
 				"≠": "NEQ",
@@ -173,7 +209,6 @@ export class Parser {
 	constructor(tokens) {
 		this.tokens = tokens;
 		this.pos = 0;
-		this.implicitVars = new Set(["α", "β", "γ", "δ", "ε", "ζ", "η", "θ"]);
 	}
 
 	peek(offset = 0) {
@@ -213,21 +248,16 @@ export class Parser {
 			if (this.match("ASSIGN")) {
 				this.advance(); // consume ≔
 				// Support block-style definitions:
-				// name ≔\n  inner ≔ ...\n  inner2 ≔ ...\n\n  final_expr
 				if (this.match("NEWLINE")) {
-					// consume first newline
 					this.advance();
 					const innerDefs = [];
-					// Parse inner definitions (IDENT ASSIGN expr) until an empty line separates final expression
 					while (this.match("IDENT") && this.peek(1) && this.peek(1).type === "ASSIGN") {
 						const innerName = this.advance().value;
 						this.advance(); // consume ASSIGN
 						const innerValue = this.parseExpression();
 						innerDefs.push({ type: "Definition", name: innerName, value: innerValue });
 						if (this.match("NEWLINE")) {
-							// consume newline after inner definition
 							this.advance();
-							// if next is another NEWLINE, consume and break (empty line)
 							if (this.match("NEWLINE")) {
 								this.advance();
 								break;
@@ -416,7 +446,7 @@ export class Parser {
 	parseExponentiation() {
 		let left = this.parseCompose();
 
-		while (this.match("POW", "SQ", "CUB")) {
+		while (this.match("POW", "SQ", "CUB", "SUPERSCRIPT")) {
 			const token = this.advance();
 			let right;
 
@@ -424,6 +454,8 @@ export class Parser {
 				right = { type: "Literal", value: 2 };
 			} else if (token.type === "CUB") {
 				right = { type: "Literal", value: 3 };
+			} else if (token.type === "SUPERSCRIPT") {
+				right = { type: "Literal", value: token.value };
 			} else {
 				right = this.parsePostfix();
 			}
@@ -493,7 +525,6 @@ export class Parser {
 		if (token.type === "IDENT") {
 			const value = token.value;
 			this.advance();
-			// π is a special constant when used as identifier
 			if (value === "π") {
 				return { type: "Constant", name: "π" };
 			}
@@ -540,25 +571,19 @@ export class Generator {
 
 	generateStatement(stmt) {
 		if (stmt.type === "Definition") {
-			// Reset usedImplicitVars for this statement
 			this.usedImplicitVars = new Set();
 			
-			// If value is explicitly an ArrowFunction, don't generate implicit wrapper
 			if (stmt.value && stmt.value.type === "ArrowFunction") {
 				const arrowStr = this.generateExpression(stmt.value);
 				return `const ${stmt.name} = ${arrowStr};`;
 			}
 
-			// Handle block-style values
 			if (stmt.value && stmt.value.type === "Block") {
-				// collect implicit vars from inner defs and final expr
 				stmt.value.body.forEach((d) => this.collectImplicitVars(d.value));
 				this.collectImplicitVars(stmt.value.expr);
-				// remove inner definition names from implicit args (they are local)
 				const innerNames = new Set(stmt.value.body.map((d) => d.name));
 				innerNames.forEach((n) => this.usedImplicitVars.delete(n));
 				const implicitArgs = Array.from(this.usedImplicitVars).sort();
-				// Try to inline inner defs into final expression for a single-expression arrow when safe
 				let finalExprStr = this.generateExpression(stmt.value.expr);
 				stmt.value.body.forEach((d) => {
 					const innerStr = this.generateExpression(d.value);
@@ -572,22 +597,17 @@ export class Generator {
 					return `const ${stmt.name} = (${implicitArgs.join(", ")}) => ${finalExprStr};`;
 				}
 			} else {
-				// Non-block behavior: collect implicit vars and render expression
 				this.collectImplicitVars(stmt.value);
 				const implicitArgs = Array.from(this.usedImplicitVars).sort();
 				let expr = this.generateExpression(stmt.value);
-				// Compatibility tweak for certain multiply/power patterns expected by tests: wrap outer parens
 				if (stmt.value && stmt.value.type === 'BinaryOp' && stmt.value.op === '*' && stmt.value.left && stmt.value.left.type === 'Literal' && stmt.value.right && stmt.value.right.type === 'BinaryOp' && stmt.value.right.op === '**') {
 					expr = `(${expr})`;
 				}
 				if (implicitArgs.length === 0) {
-					// No implicit args, simple constant
 					return `const ${stmt.name} = ${expr};`;
 				} else if (implicitArgs.length === 1) {
-					// Single implicit arg
 					return `const ${stmt.name} = ${implicitArgs[0]} => ${expr};`;
 				} else {
-					// Multiple implicit args
 					return `const ${stmt.name} = (${implicitArgs.join(", ")}) => ${expr};`;
 				}
 			}
@@ -665,13 +685,11 @@ export class Generator {
 	}
 
 	collectImplicitVars(expr) {
-		const greekLetters = /^[α-ω]$/;
+		const greekLetters = /^[α-ω](_[0-9a-zA-Z]+)?$/;
 
 		if (expr.type === "Variable" && greekLetters.test(expr.name)) {
 			this.usedImplicitVars.add(expr.name);
 		} else if (expr.type === "ArrowFunction") {
-			// Do not collect params as implicit vars
-			const localUsed = new Set();
 			const tempGen = new Generator({ body: [] });
 			tempGen.collectImplicitVars(expr.body);
 			tempGen.usedImplicitVars.forEach(v => {
