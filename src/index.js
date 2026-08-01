@@ -8,7 +8,7 @@ const SUBSCRIPT_MAP = {
 	"₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
 	"ₐ": "a", "ₑ": "e", "ₒ": "o", "ₓ": "x", "ₕ": "h",
 	"ₖ": "k", "ₗ": "l", "ₘ": "m", "ₙ": "n", "ₚ": "p",
-	"ₛ": "s", "ₜ": "t", "₋": "_", "₊": "+"
+	"ₛ": "s", "ₜ": "t"
 };
 
 const SUPERSCRIPT_MAP = {
@@ -17,22 +17,8 @@ const SUPERSCRIPT_MAP = {
 	"⁻": "-", "⁺": "+"
 };
 
-function normalizeSubscriptIdentifier(ident) {
-	let result = "";
-	let inSub = false;
-	for (const char of ident) {
-		if (SUBSCRIPT_MAP[char]) {
-			if (!inSub) {
-				result += "_";
-				inSub = true;
-			}
-			result += SUBSCRIPT_MAP[char];
-		} else {
-			inSub = false;
-			result += char;
-		}
-	}
-	return result;
+function isSubscriptChar(ch) {
+	return SUBSCRIPT_MAP[ch] !== undefined || /[₀-₉]/.test(ch);
 }
 
 export class Lexer {
@@ -113,14 +99,24 @@ export class Lexer {
 				continue;
 			}
 
-			// Identifiers (including Greek letters, Latin letters, underscores, digits, and subscript characters)
+			// Subscript characters (₀, ₁, ..., ₙ etc.) — emitted as a separate SUBSCRIPT token
+			if (isSubscriptChar(char)) {
+				let subStr = "";
+				while (this.pos < this.input.length && isSubscriptChar(this.peek())) {
+					const c = this.advance();
+					subStr += SUBSCRIPT_MAP[c] ?? c;
+				}
+				tokens.push({ type: "SUBSCRIPT", value: subStr });
+				continue;
+			}
+
+			// Identifiers (Greek letters, Latin letters, underscores, digits)
 			if (/[a-zA-Z_α-ω]/.test(char)) {
 				let ident = "";
-				while (this.pos < this.input.length && /[a-zA-Z0-9_α-ω₀-₉ₐ-ₜ]/.test(this.peek())) {
+				while (this.pos < this.input.length && /[a-zA-Z0-9_α-ω]/.test(this.peek())) {
 					ident += this.advance();
 				}
-				const normalized = normalizeSubscriptIdentifier(ident);
-				tokens.push({ type: "IDENT", value: normalized });
+				tokens.push({ type: "IDENT", value: ident });
 				continue;
 			}
 
@@ -491,6 +487,13 @@ export class Parser {
 				const index = this.parseExpression();
 				this.expect("RBRACKET");
 				expr = { type: "IndexAccess", object: expr, index };
+			} else if (this.match("SUBSCRIPT")) {
+				// Unicode subscript: x₀ → x[0], x₁ → x[1]
+				const sub = this.advance();
+				const indexNode = isNaN(Number(sub.value))
+					? { type: "Variable", name: sub.value }
+					: { type: "Literal", value: Number(sub.value) };
+				expr = { type: "IndexAccess", object: expr, index: indexNode };
 			} else {
 				break;
 			}

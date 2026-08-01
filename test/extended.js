@@ -268,14 +268,14 @@ test(
 
 console.log('\n▶ Test Group: 下付き・上付き文字 (Subscripts & Superscripts)');
 test(
-  '11.1: 下付き添字の識別子 (x₀, x₁)',
+  '11.1: 下付き添字の添字アクセス (x₀, x₁)',
   `point ≔ x₀ + x₁`,
-  /const point = \(x_0 \+ x_1\);/
+  /const point = \(x\[0\] \+ x\[1\]\);/
 );
 test(
   '11.2: 暗黙引数付き下付き文字 (α₁, β₂)',
   `dist_sub ≔ α₁ + β₂`,
-  /const dist_sub = \(α_1, β_2\) => \(α_1 \+ β_2\);/
+  /const dist_sub = \(α, β\) => \(α\[1\] \+ β\[2\]\);/
 );
 test(
   '11.3: 負の指数 (x⁻¹)',
