@@ -362,6 +362,59 @@ test(
   /const chain_sub = \(\[\.\.\.A\]\.every\(x => B\.has\(x\)\)\) && \(\[\.\.\.B\]\.every\(x => C\.has\(x\)\)\);/
 );
 
+console.log('\n▶ Test Group: パイプライン演算子 (Pipeline Operator)');
+test(
+  '14.1: 関数参照へのパイプ (x |> f)',
+  `result ≔ x |> f`,
+  /const result = f\(x\);/
+);
+test(
+  '14.2: 複数引数関数へのパイプ (x |> f(a, b))',
+  `result ≔ x |> f(a, b)`,
+  /const result = f\(x, a, b\);/
+);
+test(
+  '14.3: 連鎖パイプライン (README例)',
+  `result ≔ numbers |> filter(isPrime) |> map(square) |> sum`,
+  /const result = sum\(map\(filter\(numbers, isPrime\), square\)\);/
+);
+test(
+  '14.4: 引数なし関数呼び出し (x |> f())',
+  `result ≔ x |> f()`,
+  /const result = f\(x\);/
+);
+test(
+  '14.5: 算術より緩い優先順位 (x + 1 |> f)',
+  `result ≔ x + 1 |> f`,
+  /const result = f\(\(x \+ 1\)\);/
+);
+test(
+  '14.6: アロー関数を右辺に (x |> (y ↦ y * 2))',
+  `result ≔ x |> (y ↦ y * 2)`,
+  /const result = \(y => \(y \* 2\)\)\(x\);/
+);
+test(
+  '14.7: メソッド呼び出しへのパイプ (x |> obj.method(y))',
+  `result ≔ x |> obj.method(y)`,
+  /const result = obj\.method\(x, y\);/
+);
+test(
+  '14.8: 右辺が関数でない場合はエラー',
+  `result ≔ x |> a + b`,
+  null,
+  false
+);
+test(
+  '14.9: 左結合の連鎖 (x |> f |> g)',
+  `result ≔ x |> f |> g`,
+  /const result = g\(f\(x\)\);/
+);
+test(
+  '14.10: 合成関数へのパイプ (x |> f ∘ g)',
+  `result ≔ x |> f ∘ g`,
+  /const result = \(\(\(\.\.\.args\) => f\(g\(\.\.\.args\)\)\)\)\(x\);/
+);
+
 console.log('\n▶ Test Group: エラーケース (Error Cases)');
 test(
   '8.1: 不正な文字 (should fail)',

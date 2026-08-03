@@ -146,6 +146,13 @@ export class Lexer {
 				continue;
 			}
 
+			if (twoChar === "|>") {
+				this.advance();
+				this.advance();
+				tokens.push({ type: "PIPE", value: "|>" });
+				continue;
+			}
+
 			const symbolMap = {
 				"+": "PLUS",
 				"-": "MINUS",
@@ -362,7 +369,27 @@ export class Parser {
 			}
 		}
 
-		return this.parseImplies();
+		return this.parsePipeline();
+	}
+
+	parsePipeline() {
+		// Pipeline: a |> f(b) |> g  →  g(f(a, b))
+		// Binds loosest (right after arrow functions), so the left side captures
+		// the full expression (e.g. x + 1 |> f means f(x + 1)).
+		let left = this.parseImplies();
+
+		while (this.match("PIPE")) {
+			this.advance();
+			const right = this.parseImplies();
+			const isCallable = ["Variable", "MemberAccess", "FunctionCall", "ArrowFunction"].includes(right.type)
+				|| (right.type === "BinaryOp" && right.op === "∘");
+			if (!isCallable) {
+				throw new Error(`Pipeline operator (|>) requires a function call or reference on the right-hand side, got ${right.type}`);
+			}
+			left = { type: "Pipeline", input: left, func: right };
+		}
+
+		return left;
 	}
 
 	parseImplies() {
@@ -567,6 +594,19 @@ export class Parser {
 					? { type: "Variable", name: sub.value }
 					: { type: "Literal", value: Number(sub.value) };
 				expr = { type: "IndexAccess", object: expr, index: indexNode };
+			} else if (this.match("LPAREN")) {
+				// Function call: f(a, b) → f(a, b)
+				this.advance();
+				const args = [];
+				if (!this.match("RPAREN")) {
+					args.push(this.parseExpression());
+					while (this.match("COMMA")) {
+						this.advance();
+						args.push(this.parseExpression());
+					}
+				}
+				this.expect("RPAREN");
+				expr = { type: "FunctionCall", callee: expr, args };
 			} else {
 				break;
 			}
@@ -620,7 +660,7 @@ export class Parser {
 		if (token.type === "SQRT") {
 			this.advance();
 			const arg = this.parsePrimary();
-			return { type: "FunctionCall", name: "sqrt", args: [arg] };
+			return { type: "FunctionCall", callee: { type: "Variable", name: "Math.sqrt" }, args: [arg] };
 		}
 
 		if (token.type === "LPAREN") {
@@ -788,11 +828,31 @@ export class Generator {
 		}
 
 		if (expr.type === "FunctionCall") {
+			const callee = this.generateExpression(expr.callee);
 			const args = expr.args.map((arg) => this.generateExpression(arg)).join(", ");
-			if (expr.name === "sqrt") {
-				return `Math.sqrt(${args})`;
+			return `${callee}(${args})`;
+		}
+
+		if (expr.type === "Pipeline") {
+			const input = this.generateExpression(expr.input);
+			const func = expr.func;
+
+			if (func.type === "FunctionCall") {
+				const callee = this.generateExpression(func.callee);
+				const args = func.args.map((arg) => this.generateExpression(arg)).join(", ");
+				return `${callee}(${args ? `${input}, ${args}` : input})`;
 			}
-			throw new Error(`Unknown function: ${expr.name}`);
+
+			if (func.type === "Variable" || func.type === "MemberAccess") {
+				const callee = this.generateExpression(func);
+				return `${callee}(${input})`;
+			}
+
+			if (func.type === "ArrowFunction" || (func.type === "BinaryOp" && func.op === "∘")) {
+				return `(${this.generateExpression(func)})(${input})`;
+			}
+
+			throw new Error(`Pipeline operator (|>) requires a function call or reference on the right-hand side, got ${func.type}`);
 		}
 
 		throw new Error(`Unknown expression type: ${expr.type}`);
@@ -830,7 +890,11 @@ export class Generator {
 			this.collectImplicitVars(expr.object);
 			this.collectImplicitVars(expr.index);
 		} else if (expr.type === "FunctionCall") {
+			this.collectImplicitVars(expr.callee);
 			expr.args.forEach((arg) => this.collectImplicitVars(arg));
+		} else if (expr.type === "Pipeline") {
+			this.collectImplicitVars(expr.input);
+			this.collectImplicitVars(expr.func);
 		}
 	}
 }
