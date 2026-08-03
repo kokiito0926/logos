@@ -448,6 +448,44 @@ test(
   /const prec = new Set\(\[\.\.\.A\]\.filter\(x => B\.has\(x\)\)\)\.every\(α => \(α > 0\)\);/
 );
 
+console.log('\n▶ Test Group: 総和・総積 (Sum & Product)');
+test(
+  '16.1: 総和 (∑ → reduce +)',
+  `total ≔ ∑ α ∈ numbers : α`,
+  /const total = numbers\.reduce\(\(acc, α\) => acc \+ α, 0\);/
+);
+test(
+  '16.2: 総積 (∏ → reduce *)',
+  `product ≔ ∏ α ∈ numbers : α`,
+  /const product = numbers\.reduce\(\(acc, α\) => acc \* α, 1\);/
+);
+test(
+  '16.3: 総和の本体 (α²)',
+  `sum_sq ≔ ∑ α ∈ numbers : α²`,
+  /const sum_sq = numbers\.reduce\(\(acc, α\) => acc \+ \(α \*\* 2\), 0\);/
+);
+test(
+  '16.4: 総和の複合本体 (α.price * α.qty)',
+  `weighted ≔ ∑ α ∈ items : α.price * α.qty`,
+  /const weighted = items\.reduce\(\(acc, α\) => acc \+ \(α\.price \* α\.qty\), 0\);/
+);
+test(
+  '16.5: 束縛変数は暗黙引数に含めない',
+  `mixed ≔ ∑ α ∈ nums : α + β`,
+  /const mixed = β => nums\.reduce\(\(acc, α\) => acc \+ \(α \+ β\), 0\);/
+);
+test(
+  '16.6: 複数行の本体',
+  `multi ≔ ∏ α ∈ xs :
+    α + 1`,
+  /const multi = xs\.reduce\(\(acc, α\) => acc \* \(α \+ 1\), 1\);/
+);
+test(
+  '16.7: 範囲との組み合わせ (1‥10)',
+  `sum_range ≔ ∑ α ∈ 1‥10 : α`,
+  /const sum_range = range\(1, 10\)\.reduce\(\(acc, α\) => acc \+ α, 0\);/
+);
+
 console.log('\n▶ Test Group: エラーケース (Error Cases)');
 test(
   '8.1: 不正な文字 (should fail)',

@@ -124,6 +124,7 @@ const empty = new Set();
 | `⊆` `⊂` | 部分集合・真部分集合 | `A ⊆ B` → `[...A].every(x => B.has(x))`, `A ⊂ B` → 部分集合かつ `A.size < B.size` |
 | `‥` | 範囲 | `1‥10` → `range(1, 10)`, `0‥<n` → `range(0, n, true)` |
 | `∀` `∃` `∄` | 量化 (全称・存在・非存在) | `∀ α ∈ users : α.age ≥ 18` → `users.every(α => α.age >= 18)`, `∃ α ∈ users : ...` → `users.some(...)`, `∄ α ∈ users : ...` → `!users.some(...)` |
+| `∑` `∏` | 総和・総積 | `∑ α ∈ numbers : α` → `numbers.reduce((acc, α) => acc + α, 0)`, `∏ α ∈ numbers : α` → `numbers.reduce((acc, α) => acc * α, 1)` |
 | 比較の連結 | チェーン比較 | `0 ≤ α ≤ 10` → `(0 <= α) && (α <= 10)` |
 | `⊤` `⊥` | 真偽値リテラル | `true`, `false` |
 | `∅` | 空集合リテラル | `new Set()` |
@@ -239,6 +240,42 @@ all_in_both ≔ ∀ α ∈ A ∩ B : α > 0
 const all_in_both = new Set([...A].filter(x => B.has(x))).every(α => (α > 0));
 ```
 
+### 総和・総積
+
+集合（または配列）に対する総和・総積を `∑`, `∏` で書けます。  
+構文は `∑/∏ 変数 ∈ 集合 : 本体` です。束縛変数は暗黙引数には含まれません。  
+生成コードは `reduce` を用います（総和は初期値 `0`、総積は初期値 `1`）。
+
+| Logos | 用途 | 変換例 |
+| --- | --- | --- |
+| `∑ α ∈ A : f(α)` | 総和 | `A.reduce((acc, α) => acc + f(α), 0)` |
+| `∏ α ∈ A : f(α)` | 総積 | `A.reduce((acc, α) => acc * f(α), 1)` |
+
+```logos
+total    ≔ ∑ α ∈ numbers : α
+sum_sq   ≔ ∑ α ∈ numbers : α²
+product  ≔ ∏ α ∈ numbers : α
+weighted ≔ ∑ α ∈ items : α.price * α.qty
+```
+
+```js
+const total = numbers.reduce((acc, α) => acc + α, 0);
+const sum_sq = numbers.reduce((acc, α) => acc + (α ** 2), 0);
+const product = numbers.reduce((acc, α) => acc * α, 1);
+const weighted = items.reduce((acc, α) => acc + (α.price * α.qty), 0);
+```
+
+量化と同様に、本体はコロンの後の改行に続けて書くこともできます。
+
+```logos
+sum_plus_one ≔ ∑ α ∈ xs :
+    α + 1
+```
+
+```js
+const sum_plus_one = xs.reduce((acc, α) => acc + (α + 1), 0);
+```
+
 ### パイプライン演算子
 
 左辺の式を、右辺の関数の**第一引数**として渡します。データ変換の連鎖を読みやすくできます。
@@ -285,15 +322,7 @@ zx src/cli.js example/index.logos --output example/index.js
 
 以下はメモに記載されている機能拡張・仕様案であり、現在のコンパイラではまだ利用できません。
 
-### 1. 総和・総積（高階操作）
-
-- **総和・総積**:
-  - `∑ α ∈ numbers : α` → `numbers.reduce(...)`
-  - `∏` (総積)
-
-> 量化構文 `∀` / `∃` / `∄` はすでに実装済みです（「現在使える構文」の「量化」を参照）。
-
-### 2. 制御フロー・ブロック構造
+### 1. 制御フロー・ブロック構造
 
 - **インデントブロックと暗黙戻り値**:
   インデントでスコープを表現し、途中でローカル変数を定義して、**最後の式を戻り値**とする複数行の関数定義。
@@ -304,7 +333,7 @@ zx src/cli.js example/index.logos --output example/index.js
       √(γ² + δ²)
   ```
 
-### 3. 表記法・Unicode識別子・型システム構想
+### 2. 表記法・Unicode識別子・型システム構想
 
 - **Unicode数学スタイルの識別子**: 太字 (`𝐀`, `𝐱`)、イタリック (`𝑓`, `𝑥`)、筆記体 (`𝒜`, `𝒳`)、フラクトゥール (`𝔄`, `𝔅`) 等をそのまま識別子としてサポート
 - **型注釈構想 (TypeScript等へのコンパイル)**: 黒板太字 (`ℕ`, `ℤ`, `ℝ`, `ℂ`) を型注釈として利用 (例: `age : ℕ`)

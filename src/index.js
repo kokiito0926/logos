@@ -180,6 +180,8 @@ export class Lexer {
 				"∀": "FORALL",
 				"∃": "EXISTS",
 				"∄": "NOTEXISTS",
+				"∑": "SUM",
+				"∏": "PRODUCT",
 				"∈": "IN",
 				"∉": "NOTIN",
 				"∩": "INTERSECT",
@@ -300,7 +302,7 @@ export class Parser {
 	}
 
 	parseQuantifier() {
-		if (this.match("FORALL", "EXISTS", "NOTEXISTS")) {
+		if (this.match("FORALL", "EXISTS", "NOTEXISTS", "SUM", "PRODUCT")) {
 			const quant = this.advance();
 			const boundVar = this.expect("IDENT").value;
 			this.expect("IN");
@@ -313,7 +315,9 @@ export class Parser {
 			const body = this.parseExpression();
 			const quantifier =
 				quant.type === "FORALL" ? "∀" :
-				quant.type === "EXISTS" ? "∃" : "∄";
+				quant.type === "EXISTS" ? "∃" :
+				quant.type === "NOTEXISTS" ? "∄" :
+				quant.type === "SUM" ? "∑" : "∏";
 			return { type: "Quantifier", quantifier, var: boundVar, collection, body };
 		}
 		return this.parseAssignment();
@@ -886,8 +890,14 @@ export class Generator {
 			if (expr.quantifier === "∃") {
 				return `${collection}.some(${arrow})`;
 			}
-			// ∄: non-existence
-			return `!${collection}.some(${arrow})`;
+			if (expr.quantifier === "∄") {
+				return `!${collection}.some(${arrow})`;
+			}
+			if (expr.quantifier === "∑") {
+				return `${collection}.reduce((acc, ${expr.var}) => acc + ${body}, 0)`;
+			}
+			// ∏: product
+			return `${collection}.reduce((acc, ${expr.var}) => acc * ${body}, 1)`;
 		}
 
 		throw new Error(`Unknown expression type: ${expr.type}`);

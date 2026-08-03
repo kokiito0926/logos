@@ -167,5 +167,19 @@ test(
   /const no_minor = !users\.some\(α => \(α\.age < 18\)\);/
 );
 
+// Test 21: Sum (∑)
+test(
+  'Test 21: Sum (∑)',
+  `total ≔ ∑ α ∈ numbers : α`,
+  /const total = numbers\.reduce\(\(acc, α\) => acc \+ α, 0\);/
+);
+
+// Test 22: Product (∏)
+test(
+  'Test 22: Product (∏)',
+  `product ≔ ∏ α ∈ numbers : α`,
+  /const product = numbers\.reduce\(\(acc, α\) => acc \* α, 1\);/
+);
+
 console.log('\n========== Summary ==========');
 console.log('All tests completed!');
