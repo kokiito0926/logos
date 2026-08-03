@@ -3,18 +3,18 @@ import { LogosCompiler } from '../src/index.js';
 function test(name, code, expectedPattern, shouldPass = true) {
   console.log(`\n========== ${name} ==========`);
   console.log(`Input: ${code}`);
-  
+
   try {
     const compiler = new LogosCompiler();
     const result = compiler.compile(code);
-    
+
     if (!shouldPass) {
       console.log(`✗ FAILED: Expected to fail but passed`);
       return;
     }
-    
+
     console.log(`✓ Output: ${result}`);
-    
+
     if (expectedPattern && !expectedPattern.test(result)) {
       console.log(`✗ Pattern check FAILED: ${expectedPattern}`);
     } else if (expectedPattern) {
@@ -313,6 +313,53 @@ test(
   '12.5: 定数との二重比較 (1 ≤ α ≤ 3)',
   `unit_range ≔ 1 ≤ α ≤ 3`,
   /const unit_range = α => \(1 <= α\) && \(α <= 3\);/
+);
+
+console.log('\n▶ Test Group: 集合演算 (Set Operations)');
+test(
+  '13.1: 共通部分 (A ∩ B)',
+  `both ≔ A ∩ B`,
+  /const both = new Set\(\[\.\.\.A\]\.filter\(x => B\.has\(x\)\)\);/
+);
+test(
+  '13.2: 和集合 (A ∪ B)',
+  `all ≔ A ∪ B`,
+  /const all = new Set\(\[\.\.\.A, \.\.\.B\]\);/
+);
+test(
+  '13.3: 差集合 (A ∖ B)',
+  `only_a ≔ A ∖ B`,
+  /const only_a = new Set\(\[\.\.\.A\]\.filter\(x => !B\.has\(x\)\)\);/
+);
+test(
+  '13.4: 直積 (A × B)',
+  `pairs ≔ A × B`,
+  /const pairs = new Set\(\[\.\.\.A\]\.flatMap\(a => \[\.\.\.B\]\.map\(b => \[a, b\]\)\)\);/
+);
+test(
+  '13.5: 部分集合 (A ⊆ B)',
+  `sub ≔ A ⊆ B`,
+  /const sub = \(\[\.\.\.A\]\.every\(x => B\.has\(x\)\)\);/
+);
+test(
+  '13.6: 真部分集合 (A ⊂ B)',
+  `psub ≔ A ⊂ B`,
+  /const psub = \(\[\.\.\.A\]\.every\(x => B\.has\(x\)\) && A\.size < B\.size\);/
+);
+test(
+  '13.7: 帰属と共通部分の優先順位 (α ∈ A ∩ B)',
+  `has_all ≔ α ∈ A ∩ B`,
+  /const has_all = α => \(new Set\(\[\.\.\.A\]\.filter\(x => B\.has\(x\)\)\)\.has\(α\)\);/
+);
+test(
+  '13.8: 積より和が低い優先順位 (A ∪ B ∩ C)',
+  `prec ≔ A ∪ B ∩ C`,
+  /const prec = new Set\(\[\.\.\.A, \.\.\.new Set\(\[\.\.\.B\]\.filter\(x => C\.has\(x\)\)\)\]\);/
+);
+test(
+  '13.9: 部分集合のチェーン (A ⊆ B ⊆ C)',
+  `chain_sub ≔ A ⊆ B ⊆ C`,
+  /const chain_sub = \(\[\.\.\.A\]\.every\(x => B\.has\(x\)\)\) && \(\[\.\.\.B\]\.every\(x => C\.has\(x\)\)\);/
 );
 
 console.log('\n▶ Test Group: エラーケース (Error Cases)');

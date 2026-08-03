@@ -174,6 +174,12 @@ export class Lexer {
 				"∃": "EXISTS",
 				"∈": "IN",
 				"∉": "NOTIN",
+				"∩": "INTERSECT",
+				"∪": "UNION",
+				"⊆": "SUBSET",
+				"⊂": "PROPER_SUBSET",
+				"∖": "SETDIFF",
+				"×": "CARTESIAN",
 				"⊤": "TRUE",
 				"⊥": "FALSE",
 				"∅": "EMPTYSET",
@@ -420,19 +426,21 @@ export class Parser {
 			GTE: ">=",
 			IN: "∈",
 			NOTIN: "∉",
+			SUBSET: "⊆",
+			PROPER_SUBSET: "⊂",
 		};
 
-		let left = this.parseAdditive();
-		if (!this.match("EQ", "NEQ", "CONGRUENT", "APPROX", "LT", "GT", "LTE", "GTE", "IN", "NOTIN")) {
+		let left = this.parseSetUnion();
+		if (!this.match("EQ", "NEQ", "CONGRUENT", "APPROX", "LT", "GT", "LTE", "GTE", "IN", "NOTIN", "SUBSET", "PROPER_SUBSET")) {
 			return left;
 		}
 
 		// Chain comparison: 0 ≤ α ≤ 10 → (0 <= α) && (α <= 10)
 		// Each right operand also becomes the left operand of the next comparison.
 		const comparisons = [];
-		while (this.match("EQ", "NEQ", "CONGRUENT", "APPROX", "LT", "GT", "LTE", "GTE", "IN", "NOTIN")) {
+		while (this.match("EQ", "NEQ", "CONGRUENT", "APPROX", "LT", "GT", "LTE", "GTE", "IN", "NOTIN", "SUBSET", "PROPER_SUBSET")) {
 			const token = this.advance();
-			const right = this.parseAdditive();
+			const right = this.parseSetUnion();
 			comparisons.push({ left, op: operatorMap[token.type], right });
 			left = right;
 		}
@@ -445,10 +453,36 @@ export class Parser {
 		return { type: "ChainComparison", comparisons };
 	}
 
+	// Set operations bind tighter than comparisons (so α ∈ A ∩ B means α ∈ (A ∩ B))
+	// but looser than arithmetic: ∪ < ∩ < ∖ < ×
+	parseSetUnion() {
+		let left = this.parseSetIntersect();
+
+		while (this.match("UNION")) {
+			this.advance();
+			const right = this.parseSetIntersect();
+			left = { type: "BinaryOp", op: "∪", left, right };
+		}
+
+		return left;
+	}
+
+	parseSetIntersect() {
+		let left = this.parseAdditive();
+
+		while (this.match("INTERSECT")) {
+			this.advance();
+			const right = this.parseAdditive();
+			left = { type: "BinaryOp", op: "∩", left, right };
+		}
+
+		return left;
+	}
+
 	parseAdditive() {
 		let left = this.parseMultiplicative();
 
-		while (this.match("PLUS", "MINUS")) {
+		while (this.match("PLUS", "MINUS", "SETDIFF")) {
 			const op = this.advance().value;
 			const right = this.parseMultiplicative();
 			left = { type: "BinaryOp", op, left, right };
@@ -460,7 +494,7 @@ export class Parser {
 	parseMultiplicative() {
 		let left = this.parseUnary();
 
-		while (this.match("MUL", "DIV")) {
+		while (this.match("MUL", "DIV", "CARTESIAN")) {
 			const op = this.advance().value;
 			const right = this.parseUnary();
 			left = { type: "BinaryOp", op, left, right };
@@ -717,6 +751,24 @@ export class Generator {
 			}
 			if (expr.op === "∉") {
 				return `(!${right}.has(${left}))`;
+			}
+			if (expr.op === "∩") {
+				return `new Set([...${left}].filter(x => ${right}.has(x)))`;
+			}
+			if (expr.op === "∪") {
+				return `new Set([...${left}, ...${right}])`;
+			}
+			if (expr.op === "∖") {
+				return `new Set([...${left}].filter(x => !${right}.has(x)))`;
+			}
+			if (expr.op === "×") {
+				return `new Set([...${left}].flatMap(a => [...${right}].map(b => [a, b])))`;
+			}
+			if (expr.op === "⊆") {
+				return `([...${left}].every(x => ${right}.has(x)))`;
+			}
+			if (expr.op === "⊂") {
+				return `([...${left}].every(x => ${right}.has(x)) && ${left}.size < ${right}.size)`;
 			}
 			if (expr.op === "∘") {
 				return `((...args) => ${left}(${right}(...args)))`;
