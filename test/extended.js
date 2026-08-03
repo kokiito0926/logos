@@ -1,5 +1,7 @@
 import { LogosCompiler } from '../src/index.js';
 
+let failures = 0;
+
 function test(name, code, expectedPattern, shouldPass = true) {
   console.log(`\n========== ${name} ==========`);
   console.log(`Input: ${code}`);
@@ -10,6 +12,7 @@ function test(name, code, expectedPattern, shouldPass = true) {
 
     if (!shouldPass) {
       console.log(`✗ FAILED: Expected to fail but passed`);
+      failures++;
       return;
     }
 
@@ -17,6 +20,7 @@ function test(name, code, expectedPattern, shouldPass = true) {
 
     if (expectedPattern && !expectedPattern.test(result)) {
       console.log(`✗ Pattern check FAILED: ${expectedPattern}`);
+      failures++;
     } else if (expectedPattern) {
       console.log('✓ Pattern matched');
     }
@@ -24,6 +28,7 @@ function test(name, code, expectedPattern, shouldPass = true) {
   } catch (error) {
     if (shouldPass) {
       console.log(`✗ FAILED: ${error.message}`);
+      failures++;
     } else {
       console.log(`✓ Expected failure: ${error.message}`);
     }
@@ -419,71 +424,71 @@ console.log('\n▶ Test Group: 量化 (Quantifiers)');
 test(
   '15.1: 全称量化 (∀ → every)',
   `all_adult ≔ ∀ α ∈ users : α.age ≥ 18`,
-  /const all_adult = users\.every\(α => \(α\.age >= 18\)\);/
+  /const all_adult = \[\.\.\.users\]\.every\(α => \(α\.age >= 18\)\);/
 );
 test(
   '15.2: 存在量化 (∃ → some)',
   `has_adult ≔ ∃ α ∈ users : α.age ≥ 18`,
-  /const has_adult = users\.some\(α => \(α\.age >= 18\)\);/
+  /const has_adult = \[\.\.\.users\]\.some\(α => \(α\.age >= 18\)\);/
 );
 test(
   '15.3: 非存在量化 (∄ → !some)',
   `no_minor ≔ ∄ α ∈ users : α.age < 18`,
-  /const no_minor = !users\.some\(α => \(α\.age < 18\)\);/
+  /const no_minor = !\[\.\.\.users\]\.some\(α => \(α\.age < 18\)\);/
 );
 test(
   '15.4: 複数行の本体 (改行後も続く)',
   `all_positive ≔ ∀ α ∈ nums :
     α > 0`,
-  /const all_positive = nums\.every\(α => \(α > 0\)\);/
+  /const all_positive = \[\.\.\.nums\]\.every\(α => \(α > 0\)\);/
 );
 test(
   '15.5: 束縛変数は暗黙引数に含めない',
   `mixed ≔ ∀ α ∈ users : α.age ≥ β`,
-  /const mixed = β => users\.every\(α => \(α\.age >= β\)\);/
+  /const mixed = β => \[\.\.\.users\]\.every\(α => \(α\.age >= β\)\);/
 );
 test(
   '15.6: 集合演算の優先順位 (A ∩ B)',
   `prec ≔ ∀ α ∈ A ∩ B : α > 0`,
-  /const prec = new Set\(\[\.\.\.A\]\.filter\(x => B\.has\(x\)\)\)\.every\(α => \(α > 0\)\);/
+  /const prec = \[\.\.\.new Set\(\[\.\.\.A\]\.filter\(x => B\.has\(x\)\)\)\]\.every\(α => \(α > 0\)\);/
 );
 
 console.log('\n▶ Test Group: 総和・総積 (Sum & Product)');
 test(
   '16.1: 総和 (∑ → reduce +)',
   `total ≔ ∑ α ∈ numbers : α`,
-  /const total = numbers\.reduce\(\(acc, α\) => acc \+ α, 0\);/
+  /const total = \[\.\.\.numbers\]\.reduce\(\(acc, α\) => acc \+ α, 0\);/
 );
 test(
   '16.2: 総積 (∏ → reduce *)',
   `product ≔ ∏ α ∈ numbers : α`,
-  /const product = numbers\.reduce\(\(acc, α\) => acc \* α, 1\);/
+  /const product = \[\.\.\.numbers\]\.reduce\(\(acc, α\) => acc \* α, 1\);/
 );
 test(
   '16.3: 総和の本体 (α²)',
   `sum_sq ≔ ∑ α ∈ numbers : α²`,
-  /const sum_sq = numbers\.reduce\(\(acc, α\) => acc \+ \(α \*\* 2\), 0\);/
+  /const sum_sq = \[\.\.\.numbers\]\.reduce\(\(acc, α\) => acc \+ \(α \*\* 2\), 0\);/
 );
 test(
   '16.4: 総和の複合本体 (α.price * α.qty)',
   `weighted ≔ ∑ α ∈ items : α.price * α.qty`,
-  /const weighted = items\.reduce\(\(acc, α\) => acc \+ \(α\.price \* α\.qty\), 0\);/
+  /const weighted = \[\.\.\.items\]\.reduce\(\(acc, α\) => acc \+ \(α\.price \* α\.qty\), 0\);/
 );
 test(
   '16.5: 束縛変数は暗黙引数に含めない',
   `mixed ≔ ∑ α ∈ nums : α + β`,
-  /const mixed = β => nums\.reduce\(\(acc, α\) => acc \+ \(α \+ β\), 0\);/
+  /const mixed = β => \[\.\.\.nums\]\.reduce\(\(acc, α\) => acc \+ \(α \+ β\), 0\);/
 );
 test(
   '16.6: 複数行の本体',
   `multi ≔ ∏ α ∈ xs :
     α + 1`,
-  /const multi = xs\.reduce\(\(acc, α\) => acc \* \(α \+ 1\), 1\);/
+  /const multi = \[\.\.\.xs\]\.reduce\(\(acc, α\) => acc \* \(α \+ 1\), 1\);/
 );
 test(
   '16.7: 範囲との組み合わせ (1‥10)',
   `sum_range ≔ ∑ α ∈ 1‥10 : α`,
-  /const sum_range = range\(1, 10\)\.reduce\(\(acc, α\) => acc \+ α, 0\);/
+  /const sum_range = \[\.\.\.range\(1, 10\)\]\.reduce\(\(acc, α\) => acc \+ α, 0\);/
 );
 
 console.log('\n▶ Test Group: エラーケース (Error Cases)');
@@ -497,5 +502,12 @@ test(
 console.log('\n╔════════════════════════════════════════════════════════╗');
 console.log('║                   TEST COMPLETED                       ║');
 console.log('╚════════════════════════════════════════════════════════╝');
+
+if (failures > 0) {
+  console.log(`\n${failures} test(s) FAILED`);
+  process.exitCode = 1;
+} else {
+  console.log('\nAll tests passed!');
+}
 
 

@@ -123,8 +123,8 @@ const empty = new Set();
 | `∖` `×` | 差集合・直積 | `A ∖ B` → `new Set([...A].filter(x => !B.has(x)))`, `A × B` → 直積 `new Set(...)` |
 | `⊆` `⊂` | 部分集合・真部分集合 | `A ⊆ B` → `[...A].every(x => B.has(x))`, `A ⊂ B` → 部分集合かつ `A.size < B.size` |
 | `‥` | 範囲 | `1‥10` → `range(1, 10)`, `0‥<n` → `range(0, n, true)` |
-| `∀` `∃` `∄` | 量化 (全称・存在・非存在) | `∀ α ∈ users : α.age ≥ 18` → `users.every(α => α.age >= 18)`, `∃ α ∈ users : ...` → `users.some(...)`, `∄ α ∈ users : ...` → `!users.some(...)` |
-| `∑` `∏` | 総和・総積 | `∑ α ∈ numbers : α` → `numbers.reduce((acc, α) => acc + α, 0)`, `∏ α ∈ numbers : α` → `numbers.reduce((acc, α) => acc * α, 1)` |
+| `∀` `∃` `∄` | 量化 (全称・存在・非存在) | `∀ α ∈ users : α.age ≥ 18` → `[...users].every(α => α.age >= 18)`, `∃ α ∈ users : ...` → `[...users].some(...)`, `∄ α ∈ users : ...` → `![...users].some(...)` |
+| `∑` `∏` | 総和・総積 | `∑ α ∈ numbers : α` → `[...numbers].reduce((acc, α) => acc + α, 0)`, `∏ α ∈ numbers : α` → `[...numbers].reduce((acc, α) => acc * α, 1)` |
 | 比較の連結 | チェーン比較 | `0 ≤ α ≤ 10` → `(0 <= α) && (α <= 10)` |
 | `⊤` `⊥` | 真偽値リテラル | `true`, `false` |
 | `∅` | 空集合リテラル | `new Set()` |
@@ -213,9 +213,9 @@ const is_sub = ([...A].every(x => B.has(x)));
 
 | Logos | 用途 | 変換例 |
 | --- | --- | --- |
-| `∀ α ∈ A : P(α)` | 全称量化 (すべての要素が条件を満たす) | `A.every(α => P(α))` |
-| `∃ α ∈ A : P(α)` | 存在量化 (条件を満たす要素が存在する) | `A.some(α => P(α))` |
-| `∄ α ∈ A : P(α)` | 非存在量化 (条件を満たす要素が存在しない) | `!A.some(α => P(α))` |
+| `∀ α ∈ A : P(α)` | 全称量化 (すべての要素が条件を満たす) | `[...A].every(α => P(α))` |
+| `∃ α ∈ A : P(α)` | 存在量化 (条件を満たす要素が存在する) | `[...A].some(α => P(α))` |
+| `∄ α ∈ A : P(α)` | 非存在量化 (条件を満たす要素が存在しない) | `![...A].some(α => P(α))` |
 
 ```logos
 all_adult  ≔ ∀ α ∈ users : α.age ≥ 18
@@ -224,20 +224,21 @@ no_minor   ≔ ∄ α ∈ users : α.age < 18
 ```
 
 ```js
-const all_adult = users.every(α => (α.age >= 18));
-const has_adult = users.some(α => (α.age >= 18));
-const no_minor = !users.some(α => (α.age < 18));
+const all_adult = [...users].every(α => (α.age >= 18));
+const has_adult = [...users].some(α => (α.age >= 18));
+const no_minor = ![...users].some(α => (α.age < 18));
 ```
 
 本体はコロンの後の改行に続けて書くこともでき、その場合も最後の式が本体になります。  
-また、集合部分には `A ∩ B` などの集合演算をそのまま書けます（`∀ α ∈ A ∩ B : ...` は `(A ∩ B)` 全体に対して量化します）。
+また、集合部分には `A ∩ B` などの集合演算をそのまま書けます（`∀ α ∈ A ∩ B : ...` は `(A ∩ B)` 全体に対して量化します）。  
+量化の対象は配列と `Set` のどちらでも使えます（スプレッドしてから `every` などで処理します）。
 
 ```logos
 all_in_both ≔ ∀ α ∈ A ∩ B : α > 0
 ```
 
 ```js
-const all_in_both = new Set([...A].filter(x => B.has(x))).every(α => (α > 0));
+const all_in_both = [...new Set([...A].filter(x => B.has(x)))].every(α => (α > 0));
 ```
 
 ### 総和・総積
@@ -248,8 +249,8 @@ const all_in_both = new Set([...A].filter(x => B.has(x))).every(α => (α > 0));
 
 | Logos | 用途 | 変換例 |
 | --- | --- | --- |
-| `∑ α ∈ A : f(α)` | 総和 | `A.reduce((acc, α) => acc + f(α), 0)` |
-| `∏ α ∈ A : f(α)` | 総積 | `A.reduce((acc, α) => acc * f(α), 1)` |
+| `∑ α ∈ A : f(α)` | 総和 | `[...A].reduce((acc, α) => acc + f(α), 0)` |
+| `∏ α ∈ A : f(α)` | 総積 | `[...A].reduce((acc, α) => acc * f(α), 1)` |
 
 ```logos
 total    ≔ ∑ α ∈ numbers : α
@@ -259,13 +260,14 @@ weighted ≔ ∑ α ∈ items : α.price * α.qty
 ```
 
 ```js
-const total = numbers.reduce((acc, α) => acc + α, 0);
-const sum_sq = numbers.reduce((acc, α) => acc + (α ** 2), 0);
-const product = numbers.reduce((acc, α) => acc * α, 1);
-const weighted = items.reduce((acc, α) => acc + (α.price * α.qty), 0);
+const total = [...numbers].reduce((acc, α) => acc + α, 0);
+const sum_sq = [...numbers].reduce((acc, α) => acc + (α ** 2), 0);
+const product = [...numbers].reduce((acc, α) => acc * α, 1);
+const weighted = [...items].reduce((acc, α) => acc + (α.price * α.qty), 0);
 ```
 
-量化と同様に、本体はコロンの後の改行に続けて書くこともできます。
+量化と同様に、本体はコロンの後の改行に続けて書くこともできます。  
+また、対象は配列と `Set` のどちらでも使えます（`Set` には `reduce` がないため、スプレッドしてから処理します）。
 
 ```logos
 sum_plus_one ≔ ∑ α ∈ xs :
@@ -273,7 +275,7 @@ sum_plus_one ≔ ∑ α ∈ xs :
 ```
 
 ```js
-const sum_plus_one = xs.reduce((acc, α) => acc + (α + 1), 0);
+const sum_plus_one = [...xs].reduce((acc, α) => acc + (α + 1), 0);
 ```
 
 ### パイプライン演算子

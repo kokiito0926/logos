@@ -1,5 +1,7 @@
 import { LogosCompiler } from '../src/index.js';
 
+let failures = 0;
+
 function test(name, code, expectedPattern) {
   console.log(`\n========== ${name} ==========`);
   console.log(`Input:\n${code}`);
@@ -15,11 +17,13 @@ function test(name, code, expectedPattern) {
       } else {
         console.log('✗ FAILED: Does not match expected pattern');
         console.log(`Expected pattern: ${expectedPattern}`);
+        failures++;
       }
     }
     return result;
   } catch (error) {
     console.log(`✗ FAILED: ${error.message}`);
+    failures++;
   }
 }
 
@@ -150,36 +154,41 @@ test(
 test(
   'Test 18: Universal quantifier',
   `all_adult ≔ ∀ α ∈ users : α.age ≥ 18`,
-  /const all_adult = users\.every\(α => \(α\.age >= 18\)\);/
+  /const all_adult = \[\.\.\.users\]\.every\(α => \(α\.age >= 18\)\);/
 );
 
 // Test 19: Existential quantifier (∃)
 test(
   'Test 19: Existential quantifier',
   `has_adult ≔ ∃ α ∈ users : α.age ≥ 18`,
-  /const has_adult = users\.some\(α => \(α\.age >= 18\)\);/
+  /const has_adult = \[\.\.\.users\]\.some\(α => \(α\.age >= 18\)\);/
 );
 
 // Test 20: Non-existence quantifier (∄)
 test(
   'Test 20: Non-existence quantifier',
   `no_minor ≔ ∄ α ∈ users : α.age < 18`,
-  /const no_minor = !users\.some\(α => \(α\.age < 18\)\);/
+  /const no_minor = !\[\.\.\.users\]\.some\(α => \(α\.age < 18\)\);/
 );
 
 // Test 21: Sum (∑)
 test(
   'Test 21: Sum (∑)',
   `total ≔ ∑ α ∈ numbers : α`,
-  /const total = numbers\.reduce\(\(acc, α\) => acc \+ α, 0\);/
+  /const total = \[\.\.\.numbers\]\.reduce\(\(acc, α\) => acc \+ α, 0\);/
 );
 
 // Test 22: Product (∏)
 test(
   'Test 22: Product (∏)',
   `product ≔ ∏ α ∈ numbers : α`,
-  /const product = numbers\.reduce\(\(acc, α\) => acc \* α, 1\);/
+  /const product = \[\.\.\.numbers\]\.reduce\(\(acc, α\) => acc \* α, 1\);/
 );
 
 console.log('\n========== Summary ==========');
-console.log('All tests completed!');
+if (failures > 0) {
+  console.log(`${failures} test(s) FAILED`);
+  process.exitCode = 1;
+} else {
+  console.log('All tests passed!');
+}

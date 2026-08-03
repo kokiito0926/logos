@@ -884,20 +884,22 @@ export class Generator {
 			const collection = this.generateExpression(expr.collection);
 			const body = this.generateExpression(expr.body);
 			const arrow = `${expr.var} => ${body}`;
+			// Spread the collection so arrays and Sets both work (Set has no .every/.some/.reduce).
+			const items = `[...${collection}]`;
 			if (expr.quantifier === "∀") {
-				return `${collection}.every(${arrow})`;
+				return `${items}.every(${arrow})`;
 			}
 			if (expr.quantifier === "∃") {
-				return `${collection}.some(${arrow})`;
+				return `${items}.some(${arrow})`;
 			}
 			if (expr.quantifier === "∄") {
-				return `!${collection}.some(${arrow})`;
+				return `!${items}.some(${arrow})`;
 			}
 			if (expr.quantifier === "∑") {
-				return `${collection}.reduce((acc, ${expr.var}) => acc + ${body}, 0)`;
+				return `${items}.reduce((acc, ${expr.var}) => acc + ${body}, 0)`;
 			}
 			// ∏: product
-			return `${collection}.reduce((acc, ${expr.var}) => acc * ${body}, 1)`;
+			return `${items}.reduce((acc, ${expr.var}) => acc * ${body}, 1)`;
 		}
 
 		throw new Error(`Unknown expression type: ${expr.type}`);
