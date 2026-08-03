@@ -288,6 +288,33 @@ test(
   /const poly = \(α, β\) => \(\(α \*\* 4\) \+ \(β \*\* 10\)\);/
 );
 
+console.log('\n▶ Test Group: チェーン比較 (Chain Comparison)');
+test(
+  '12.1: 二重比較 (0 ≤ α ≤ 10)',
+  `in_range ≔ 0 ≤ α ≤ 10`,
+  /const in_range = α => \(0 <= α\) && \(α <= 10\);/
+);
+test(
+  '12.2: 異なる演算子の混在 (0 ≤ α < 10)',
+  `between ≔ 0 ≤ α < 10`,
+  /const between = α => \(0 <= α\) && \(α < 10\);/
+);
+test(
+  '12.3: 三項チェーン (a = b ≠ c ≤ d)',
+  `chain3 ≔ a = b ≠ c ≤ d`,
+  /const chain3 = \(a === b\) && \(b !== c\) && \(c <= d\);/
+);
+test(
+  '12.4: 等価チェーン (a = b = c)',
+  `equal_chain ≔ a = b = c`,
+  /const equal_chain = \(a === b\) && \(b === c\);/
+);
+test(
+  '12.5: 定数との二重比較 (1 ≤ α ≤ 3)',
+  `unit_range ≔ 1 ≤ α ≤ 3`,
+  /const unit_range = α => \(1 <= α\) && \(α <= 3\);/
+);
+
 console.log('\n▶ Test Group: エラーケース (Error Cases)');
 test(
   '8.1: 不正な文字 (should fail)',

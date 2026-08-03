@@ -409,7 +409,6 @@ export class Parser {
 	}
 
 	parseComparison() {
-		let left = this.parseAdditive();
 		const operatorMap = {
 			EQ: "===",
 			NEQ: "!==",
@@ -423,13 +422,27 @@ export class Parser {
 			NOTIN: "∉",
 		};
 
+		let left = this.parseAdditive();
+		if (!this.match("EQ", "NEQ", "CONGRUENT", "APPROX", "LT", "GT", "LTE", "GTE", "IN", "NOTIN")) {
+			return left;
+		}
+
+		// Chain comparison: 0 ≤ α ≤ 10 → (0 <= α) && (α <= 10)
+		// Each right operand also becomes the left operand of the next comparison.
+		const comparisons = [];
 		while (this.match("EQ", "NEQ", "CONGRUENT", "APPROX", "LT", "GT", "LTE", "GTE", "IN", "NOTIN")) {
 			const token = this.advance();
 			const right = this.parseAdditive();
-			left = { type: "BinaryOp", op: operatorMap[token.type], left, right };
+			comparisons.push({ left, op: operatorMap[token.type], right });
+			left = right;
 		}
 
-		return left;
+		if (comparisons.length === 1) {
+			const { left: l, op, right } = comparisons[0];
+			return { type: "BinaryOp", op, left: l, right };
+		}
+
+		return { type: "ChainComparison", comparisons };
 	}
 
 	parseAdditive() {
@@ -678,6 +691,12 @@ export class Generator {
 			return `(!${this.generateExpression(expr.argument)})`;
 		}
 
+		if (expr.type === "ChainComparison") {
+			return expr.comparisons
+				.map((c) => this.generateExpression({ type: "BinaryOp", op: c.op, left: c.left, right: c.right }))
+				.join(" && ");
+		}
+
 		if (expr.type === "BinaryOp") {
 			const left = this.generateExpression(expr.left);
 			const right = this.generateExpression(expr.right);
@@ -745,6 +764,11 @@ export class Generator {
 		} else if (expr.type === "BinaryOp") {
 			this.collectImplicitVars(expr.left);
 			this.collectImplicitVars(expr.right);
+		} else if (expr.type === "ChainComparison") {
+			expr.comparisons.forEach((c) => {
+				this.collectImplicitVars(c.left);
+				this.collectImplicitVars(c.right);
+			});
 		} else if (expr.type === "Range") {
 			this.collectImplicitVars(expr.start);
 			this.collectImplicitVars(expr.end);
