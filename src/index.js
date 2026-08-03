@@ -186,6 +186,7 @@ export class Lexer {
 				"↦": "MAPSTO",
 				"→": "ARROW",
 				"∘": "COMPOSE",
+				"‥": "RANGE",
 			};
 
 			if (symbolMap[char]) {
@@ -230,6 +231,11 @@ export class Parser {
 	parse() {
 		const statements = [];
 		while (!this.match("EOF")) {
+			// Skip newlines separating statements (blank lines allowed)
+			while (this.match("NEWLINE")) {
+				this.advance();
+			}
+			if (this.match("EOF")) break;
 			const stmt = this.parseStatement();
 			if (stmt) statements.push(stmt);
 		}
@@ -280,12 +286,30 @@ export class Parser {
 	}
 
 	parseAssignment() {
-		let left = this.parseArrow();
+		let left = this.parseRange();
 
 		if (this.match("ASSIGN_RE")) {
 			this.advance();
 			const right = this.parseAssignment();
 			return { type: "BinaryOp", op: "=", left, right };
+		}
+
+		return left;
+	}
+
+	parseRange() {
+		let left = this.parseArrow();
+
+		// Range: a‥b → range(a, b), 0‥<n → range(0, n, true) (exclusive upper bound)
+		if (this.match("RANGE")) {
+			this.advance(); // consume ‥
+			let exclusive = false;
+			if (this.match("LT")) {
+				this.advance(); // consume <
+				exclusive = true;
+			}
+			const right = this.parseArrow();
+			return { type: "Range", start: left, end: right, exclusive };
 		}
 
 		return left;
@@ -395,9 +419,11 @@ export class Parser {
 			GT: ">",
 			LTE: "<=",
 			GTE: ">=",
+			IN: "∈",
+			NOTIN: "∉",
 		};
 
-		while (this.match("EQ", "NEQ", "CONGRUENT", "APPROX", "LT", "GT", "LTE", "GTE")) {
+		while (this.match("EQ", "NEQ", "CONGRUENT", "APPROX", "LT", "GT", "LTE", "GTE", "IN", "NOTIN")) {
 			const token = this.advance();
 			const right = this.parseAdditive();
 			left = { type: "BinaryOp", op: operatorMap[token.type], left, right };
@@ -640,6 +666,14 @@ export class Generator {
 			return `${paramsStr} => ${bodyStr}`;
 		}
 
+		if (expr.type === "Range") {
+			const start = this.generateExpression(expr.start);
+			const end = this.generateExpression(expr.end);
+			return expr.exclusive
+				? `range(${start}, ${end}, true)`
+				: `range(${start}, ${end})`;
+		}
+
 		if (expr.type === "UnaryOp") {
 			return `(!${this.generateExpression(expr.argument)})`;
 		}
@@ -658,6 +692,12 @@ export class Generator {
 			}
 			if (expr.op === "≈") {
 				return `almostEqual(${left}, ${right})`;
+			}
+			if (expr.op === "∈") {
+				return `(${right}.has(${left}))`;
+			}
+			if (expr.op === "∉") {
+				return `(!${right}.has(${left}))`;
 			}
 			if (expr.op === "∘") {
 				return `((...args) => ${left}(${right}(...args)))`;
@@ -705,6 +745,9 @@ export class Generator {
 		} else if (expr.type === "BinaryOp") {
 			this.collectImplicitVars(expr.left);
 			this.collectImplicitVars(expr.right);
+		} else if (expr.type === "Range") {
+			this.collectImplicitVars(expr.start);
+			this.collectImplicitVars(expr.end);
 		} else if (expr.type === "MemberAccess") {
 			this.collectImplicitVars(expr.object);
 		} else if (expr.type === "IndexAccess") {

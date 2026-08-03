@@ -111,5 +111,40 @@ test(
   /const pythagorean = \(α, β\) => Math\.sqrt\(\(\(α \*\* 2\) \+ \(β \*\* 2\)\)\);/
 );
 
+// Test 13: Set membership (∈)
+test(
+  'Test 13: Set membership',
+  `member ≔ α ∈ set`,
+  /const member = α => \(set\.has\(α\)\);/
+);
+
+// Test 14: Set non-membership (∉)
+test(
+  'Test 14: Set non-membership',
+  `not_member ≔ α ∉ set`,
+  /const not_member = α => \(!set\.has\(α\)\);/
+);
+
+// Test 15: Range (a‥b)
+test(
+  'Test 15: Range',
+  `range_def ≔ 1‥10`,
+  /const range_def = range\(1, 10\);/
+);
+
+// Test 16: Exclusive range (0‥<n)
+test(
+  'Test 16: Exclusive range',
+  `exclusive ≔ 0‥<n`,
+  /const exclusive = range\(0, n, true\);/
+);
+
+// Test 17: Variable range (a‥b)
+test(
+  'Test 17: Variable range',
+  `var_range ≔ a‥b`,
+  /const var_range = range\(a, b\);/
+);
+
 console.log('\n========== Summary ==========');
 console.log('All tests completed!');

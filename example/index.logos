@@ -2,3 +2,6 @@ square ≔ α²
 distance ≔ √((α.x - β.x)² + (α.y - β.y)²)
 add ≔ α + β
 multiply ≔ α * β
+in_set ≔ α ∈ set
+range1to10 ≔ 1‥10
+exclusive_range ≔ 0‥<n
