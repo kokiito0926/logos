@@ -146,5 +146,26 @@ test(
   /const var_range = range\(a, b\);/
 );
 
+// Test 18: Universal quantifier (∀)
+test(
+  'Test 18: Universal quantifier',
+  `all_adult ≔ ∀ α ∈ users : α.age ≥ 18`,
+  /const all_adult = users\.every\(α => \(α\.age >= 18\)\);/
+);
+
+// Test 19: Existential quantifier (∃)
+test(
+  'Test 19: Existential quantifier',
+  `has_adult ≔ ∃ α ∈ users : α.age ≥ 18`,
+  /const has_adult = users\.some\(α => \(α\.age >= 18\)\);/
+);
+
+// Test 20: Non-existence quantifier (∄)
+test(
+  'Test 20: Non-existence quantifier',
+  `no_minor ≔ ∄ α ∈ users : α.age < 18`,
+  /const no_minor = !users\.some\(α => \(α\.age < 18\)\);/
+);
+
 console.log('\n========== Summary ==========');
 console.log('All tests completed!');

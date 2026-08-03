@@ -415,6 +415,39 @@ test(
   /const result = \(\(\(\.\.\.args\) => f\(g\(\.\.\.args\)\)\)\)\(x\);/
 );
 
+console.log('\n▶ Test Group: 量化 (Quantifiers)');
+test(
+  '15.1: 全称量化 (∀ → every)',
+  `all_adult ≔ ∀ α ∈ users : α.age ≥ 18`,
+  /const all_adult = users\.every\(α => \(α\.age >= 18\)\);/
+);
+test(
+  '15.2: 存在量化 (∃ → some)',
+  `has_adult ≔ ∃ α ∈ users : α.age ≥ 18`,
+  /const has_adult = users\.some\(α => \(α\.age >= 18\)\);/
+);
+test(
+  '15.3: 非存在量化 (∄ → !some)',
+  `no_minor ≔ ∄ α ∈ users : α.age < 18`,
+  /const no_minor = !users\.some\(α => \(α\.age < 18\)\);/
+);
+test(
+  '15.4: 複数行の本体 (改行後も続く)',
+  `all_positive ≔ ∀ α ∈ nums :
+    α > 0`,
+  /const all_positive = nums\.every\(α => \(α > 0\)\);/
+);
+test(
+  '15.5: 束縛変数は暗黙引数に含めない',
+  `mixed ≔ ∀ α ∈ users : α.age ≥ β`,
+  /const mixed = β => users\.every\(α => \(α\.age >= β\)\);/
+);
+test(
+  '15.6: 集合演算の優先順位 (A ∩ B)',
+  `prec ≔ ∀ α ∈ A ∩ B : α > 0`,
+  /const prec = new Set\(\[\.\.\.A\]\.filter\(x => B\.has\(x\)\)\)\.every\(α => \(α > 0\)\);/
+);
+
 console.log('\n▶ Test Group: エラーケース (Error Cases)');
 test(
   '8.1: 不正な文字 (should fail)',

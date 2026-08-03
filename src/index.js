@@ -179,6 +179,7 @@ export class Lexer {
 				"¬": "NOT",
 				"∀": "FORALL",
 				"∃": "EXISTS",
+				"∄": "NOTEXISTS",
 				"∈": "IN",
 				"∉": "NOTIN",
 				"∩": "INTERSECT",
@@ -295,6 +296,26 @@ export class Parser {
 	}
 
 	parseExpression() {
+		return this.parseQuantifier();
+	}
+
+	parseQuantifier() {
+		if (this.match("FORALL", "EXISTS", "NOTEXISTS")) {
+			const quant = this.advance();
+			const boundVar = this.expect("IDENT").value;
+			this.expect("IN");
+			const collection = this.parseExpression();
+			this.expect("COLON");
+			// Body may start on the next line
+			while (this.match("NEWLINE")) {
+				this.advance();
+			}
+			const body = this.parseExpression();
+			const quantifier =
+				quant.type === "FORALL" ? "∀" :
+				quant.type === "EXISTS" ? "∃" : "∄";
+			return { type: "Quantifier", quantifier, var: boundVar, collection, body };
+		}
 		return this.parseAssignment();
 	}
 
@@ -855,6 +876,20 @@ export class Generator {
 			throw new Error(`Pipeline operator (|>) requires a function call or reference on the right-hand side, got ${func.type}`);
 		}
 
+		if (expr.type === "Quantifier") {
+			const collection = this.generateExpression(expr.collection);
+			const body = this.generateExpression(expr.body);
+			const arrow = `${expr.var} => ${body}`;
+			if (expr.quantifier === "∀") {
+				return `${collection}.every(${arrow})`;
+			}
+			if (expr.quantifier === "∃") {
+				return `${collection}.some(${arrow})`;
+			}
+			// ∄: non-existence
+			return `!${collection}.some(${arrow})`;
+		}
+
 		throw new Error(`Unknown expression type: ${expr.type}`);
 	}
 
@@ -895,6 +930,18 @@ export class Generator {
 		} else if (expr.type === "Pipeline") {
 			this.collectImplicitVars(expr.input);
 			this.collectImplicitVars(expr.func);
+		} else if (expr.type === "Quantifier") {
+			// The collection is evaluated in the outer scope, so collect its implicit vars normally.
+			this.collectImplicitVars(expr.collection);
+			// The bound variable shadows the outer scope inside the body: exclude it,
+			// but still collect any other implicit vars referenced by the body.
+			const tempGen = new Generator({ body: [] });
+			tempGen.collectImplicitVars(expr.body);
+			tempGen.usedImplicitVars.forEach((v) => {
+				if (v !== expr.var) {
+					this.usedImplicitVars.add(v);
+				}
+			});
 		}
 	}
 }
