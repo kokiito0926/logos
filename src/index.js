@@ -389,6 +389,8 @@ export class Lexer {
 				"∂": "PARTIAL",
 				"∇": "NABLA",
 				"∮": "CONTOUR",
+				"′": "PRIME",
+				"″": "DOUBLE_PRIME",
 			};
 
 			// Track bracket depth so newlines inside parens/brackets are insignificant.
@@ -850,6 +852,10 @@ export class Parser {
 				}
 				this.expect("RPAREN");
 				expr = { type: "FunctionCall", callee: expr, args };
+			} else if (this.match("PRIME", "DOUBLE_PRIME")) {
+				// Prime notation: f′ → first derivative, f″ → second derivative.
+				const prime = this.advance();
+				expr = { type: "Prime", expr, order: prime.type === "DOUBLE_PRIME" ? 2 : 1 };
 			} else {
 				break;
 			}
@@ -1004,6 +1010,163 @@ function topoSortDefs(defs) {
 
 	for (const d of defs) visit(d.name);
 	return order;
+}
+
+/**
+ * True if `node` may depend on the variable `varName` (used to decide whether
+ * a power/exponent is constant w.r.t. the differentiation variable).
+ */
+function dependsOn(node, varName) {
+	if (node.type === "Variable") return node.name === varName;
+	if (node.type === "Literal" || node.type === "Constant") return false;
+	if (node.type === "UnaryOp") return dependsOn(node.argument, varName);
+	if (node.type === "BinaryOp") return dependsOn(node.left, varName) || dependsOn(node.right, varName);
+	if (node.type === "FunctionCall") {
+		return dependsOn(node.callee, varName) || node.args.some((a) => dependsOn(a, varName));
+	}
+	// Be conservative: unknown node shapes are treated as depending on the var.
+	return true;
+}
+
+/**
+ * Symbolically differentiate `expr` with respect to `varName`, returning a new
+ * AST node for the exact derivative, or null when the expression is not
+ * symbolically differentiable (function references, non-arithmetic operators,
+ * etc.). Supports: constant rule, power rule, sum/difference, product,
+ * quotient, and d/dx of sqrt.
+ */
+function differentiate(expr, varName) {
+	switch (expr.type) {
+		case "Literal":
+		case "Constant":
+			return { type: "Literal", value: 0 };
+
+		case "Variable":
+			return expr.name === varName
+				? { type: "Literal", value: 1 }
+				: { type: "Literal", value: 0 };
+
+		case "UnaryOp":
+			// Only logical negation exists; not differentiable.
+			return null;
+
+		case "BinaryOp": {
+			const { left, right, op } = expr;
+			if (op === "+" || op === "-") {
+				const dl = differentiate(left, varName);
+				const dr = differentiate(right, varName);
+				if (dl === null || dr === null) return null;
+				return { type: "BinaryOp", op, left: dl, right: dr };
+			}
+			if (op === "*") {
+				const dl = differentiate(left, varName);
+				const dr = differentiate(right, varName);
+				if (dl === null || dr === null) return null;
+				// d(uv) = u'v + uv'
+				return {
+					type: "BinaryOp",
+					op: "+",
+					left: { type: "BinaryOp", op: "*", left: dl, right },
+					right: { type: "BinaryOp", op: "*", left, right: dr },
+				};
+			}
+			if (op === "/") {
+				const dl = differentiate(left, varName);
+				const dr = differentiate(right, varName);
+				if (dl === null || dr === null) return null;
+				// d(u/v) = (u'v − uv') / v²
+				const num = {
+					type: "BinaryOp",
+					op: "-",
+					left: { type: "BinaryOp", op: "*", left: dl, right },
+					right: { type: "BinaryOp", op: "*", left, right: dr },
+				};
+				const den = { type: "BinaryOp", op: "**", left: right, right: { type: "Literal", value: 2 } };
+				return { type: "BinaryOp", op: "/", left: num, right: den };
+			}
+			if (op === "**") {
+				// Power rule (constant exponent): d(u^v) = v·u^(v−1)·u'
+				if (!dependsOn(right, varName)) {
+					const dl = differentiate(left, varName);
+					if (dl === null) return null;
+					const vMinus1 = { type: "BinaryOp", op: "-", left: right, right: { type: "Literal", value: 1 } };
+					const pow = { type: "BinaryOp", op: "**", left, right: vMinus1 };
+					const coef = { type: "BinaryOp", op: "*", left: right, right: pow };
+					return { type: "BinaryOp", op: "*", left: coef, right: dl };
+				}
+				// Variable exponent needs ln(u); not supported symbolically.
+				return null;
+			}
+			// Set ops, comparisons, composition, etc. — not differentiable.
+			return null;
+		}
+
+		case "FunctionCall": {
+			// d(sqrt(u)) = u' / (2·sqrt(u))
+			if (expr.callee && expr.callee.type === "Variable" && expr.callee.name === "Math.sqrt" && expr.args.length === 1) {
+				const du = differentiate(expr.args[0], varName);
+				if (du === null) return null;
+				const den = { type: "BinaryOp", op: "*", left: { type: "Literal", value: 2 }, right: expr };
+				return { type: "BinaryOp", op: "/", left: du, right: den };
+			}
+			return null;
+		}
+
+		default:
+			return null;
+	}
+}
+
+function isZero(node) {
+	return node.type === "Literal" && node.value === 0;
+}
+
+function isOne(node) {
+	return node.type === "Literal" && node.value === 1;
+}
+
+/**
+ * Light simplification of an expression tree (constant folding, x±0, x·1,
+ * x·0, x/1, x^1, x^0) so symbolic derivatives come out readable (e.g. 2α
+ * instead of (2·α^(1)·1 + 0)).
+ */
+function simplifyExpr(node) {
+	if (node.type === "BinaryOp") {
+		const left = simplifyExpr(node.left);
+		const right = simplifyExpr(node.right);
+		const op = node.op;
+		// Constant folding for arithmetic literals.
+		if (left.type === "Literal" && right.type === "Literal" && ["+", "-", "*", "/", "**"].includes(op)) {
+			const a = left.value;
+			const b = right.value;
+			if (op === "+") return { type: "Literal", value: a + b };
+			if (op === "-") return { type: "Literal", value: a - b };
+			if (op === "*") return { type: "Literal", value: a * b };
+			if (op === "/" && b !== 0) return { type: "Literal", value: a / b };
+			if (op === "**") return { type: "Literal", value: a ** b };
+		}
+		if (op === "+" && isZero(right)) return left;
+		if (op === "+" && isZero(left)) return right;
+		if (op === "-" && isZero(right)) return left;
+		if (op === "*" && isOne(right)) return left;
+		if (op === "*" && isOne(left)) return right;
+		if (op === "*" && isZero(right)) return { type: "Literal", value: 0 };
+		if (op === "*" && isZero(left)) return { type: "Literal", value: 0 };
+		if (op === "/" && isOne(right)) return left;
+		if (op === "**" && isOne(right)) return left;
+		if (op === "**" && isZero(right)) return { type: "Literal", value: 1 };
+		if (op === "**" && isOne(left)) return { type: "Literal", value: 1 };
+		if (op === "**" && isZero(left)) return { type: "Literal", value: 0 };
+		return { type: "BinaryOp", op, left, right };
+	}
+	if (node.type === "UnaryOp") {
+		return { type: "UnaryOp", op: node.op, argument: simplifyExpr(node.argument) };
+	}
+	if (node.type === "FunctionCall") {
+		return { type: "FunctionCall", callee: node.callee, args: node.args.map(simplifyExpr) };
+	}
+	// Literal, Variable, Constant, and other leaves are already minimal.
+	return node;
 }
 
 export class Generator {
@@ -1310,18 +1473,30 @@ export class Generator {
 		}
 
 		if (expr.type === "PartialDerivative") {
-			this.usesCalculus = true;
 			// `∂f/∂α` where f is a function reference → differentiate along its
 			// first coordinate: partial(f, 0).
 			if (expr.expr.type === "Variable" && expr.expr.name !== expr.var) {
+				this.usesCalculus = true;
 				return `partial(${this.generateExpression(expr.expr)}, 0)`;
 			}
-			// Otherwise bind every free Greek letter of the field to an arrow
-			// parameter and pick the index of the differentiation variable:
-			// `∂(α² + β²)/∂β` → partial((α, β) => ((α ** 2) + (β ** 2)), 1).
+			// Bind every free Greek letter of the field to an arrow parameter:
+			// `∂(α² + β²)/∂β` → (α, β) => (2 * β).
 			const tempGen = new Generator({ body: [] });
 			tempGen.collectImplicitVars(expr.expr, this.currentLocals);
 			const params = Array.from(tempGen.usedImplicitVars).sort();
+			// Exact symbolic derivative when the field is differentiable:
+			// `∂(α² + β²)/∂α` → (α, β) => (2 * α).
+			const derivative = differentiate(expr.expr, expr.var);
+			if (derivative !== null) {
+				const exact = simplifyExpr(derivative);
+				return this.generateExpression({
+					type: "ArrowFunction",
+					params,
+					body: exact,
+				});
+			}
+			// Numeric fallback (finite differences) for non-symbolic fields.
+			this.usesCalculus = true;
 			const index = params.indexOf(expr.var);
 			if (index === -1) {
 				// var is not a Greek letter present in the field; fall back to
@@ -1342,22 +1517,110 @@ export class Generator {
 		}
 
 		if (expr.type === "Gradient") {
-			this.usesCalculus = true;
 			// `∇f` where f is a function reference → gradient(f).
 			if (expr.expr.type === "Variable") {
+				this.usesCalculus = true;
 				return `gradient(${this.generateExpression(expr.expr)})`;
 			}
-			// `∇(expr)` → bind all free Greek letters of the field as arrow
-			// parameters: ∇(α² + β²) → gradient((α, β) => (α² + β²)).
+			// Bind every free Greek letter of the field as arrow parameters.
 			const tempGen = new Generator({ body: [] });
 			tempGen.collectImplicitVars(expr.expr, this.currentLocals);
 			const params = Array.from(tempGen.usedImplicitVars).sort();
+			// Symbolic gradient when every partial derivative is exact:
+			// `∇(α² + β²)` → (α, β) => [(2 * α), (2 * β)].
+			const components = [];
+			let symbolic = true;
+			for (const p of params) {
+				const d = differentiate(expr.expr, p);
+				if (d === null) {
+					symbolic = false;
+					break;
+				}
+				components.push(this.generateExpression(simplifyExpr(d)));
+			}
+			if (symbolic) {
+				const paramsStr = params.length === 1 ? params[0] : params.length === 0 ? "()" : `(${params.join(", ")})`;
+				return `${paramsStr} => [${components.join(", ")}]`;
+			}
+			// Numeric fallback (finite differences).
+			this.usesCalculus = true;
 			const arrow = this.generateExpression({
 				type: "ArrowFunction",
 				params,
 				body: expr.expr,
 			});
 			return `gradient(${arrow})`;
+		}
+
+		if (expr.type === "Prime") {
+			// `f′` / `f″` on a function reference → numeric partial derivative
+			// along the first coordinate: partial(f, 0), partial(partial(f, 0), 0).
+			if (expr.expr.type === "Variable") {
+				this.usesCalculus = true;
+				let inner = `partial(${this.generateExpression(expr.expr)}, 0)`;
+				for (let i = 1; i < expr.order; i++) {
+					inner = `partial(${inner}, 0)`;
+				}
+				return inner;
+			}
+			// Inline arrow: `(α ↦ α²)′` → differentiate the body w.r.t. the
+			// first parameter: α => (2 * α).
+			if (expr.expr.type === "ArrowFunction") {
+				const arrowExpr = expr.expr;
+				if (arrowExpr.params.length === 0) {
+					throw new Error("Prime (′) on an arrow requires at least one parameter");
+				}
+				const varName = arrowExpr.params[0];
+				let derivative = arrowExpr.body;
+				let numeric = false;
+				for (let i = 0; i < expr.order; i++) {
+					const d = differentiate(derivative, varName);
+					if (d === null) {
+						numeric = true;
+						break;
+					}
+					derivative = simplifyExpr(d);
+				}
+				if (!numeric) {
+					const paramsStr = arrowExpr.params.length === 1 ? arrowExpr.params[0] : `(${arrowExpr.params.join(", ")})`;
+					return `${paramsStr} => ${this.generateExpression(derivative)}`;
+				}
+				this.usesCalculus = true;
+				return `partial(${this.generateExpression(arrowExpr)}, 0)`;
+			}
+			// Field expression: `(α²)′` → exact derivative w.r.t. the first free
+			// Greek variable of the expression: α => (2 * α).
+			const tempGen = new Generator({ body: [] });
+			tempGen.collectImplicitVars(expr.expr, this.currentLocals);
+			const params = Array.from(tempGen.usedImplicitVars).sort();
+			if (params.length === 0) {
+				throw new Error("Prime (′) requires a function reference or an expression containing a Greek variable");
+			}
+			const varName = params[0];
+			let derivative = expr.expr;
+			let numeric = false;
+			for (let i = 0; i < expr.order; i++) {
+				const d = differentiate(derivative, varName);
+				if (d === null) {
+					numeric = true;
+					break;
+				}
+				derivative = simplifyExpr(d);
+			}
+			if (!numeric) {
+				return this.generateExpression({
+					type: "ArrowFunction",
+					params,
+					body: derivative,
+				});
+			}
+			this.usesCalculus = true;
+			const arrow = this.generateExpression({
+				type: "ArrowFunction",
+				params,
+				body: expr.expr,
+			});
+			return `partial(${arrow}, 0)`;
 		}
 
 		throw new Error(`Unknown expression type: ${expr.type}`);
@@ -1448,6 +1711,17 @@ export class Generator {
 			// scope. For a field expression `∇(expr)` the gradient is
 			// self-contained: every free Greek letter of expr becomes an arrow
 			// parameter, so nothing leaks.
+			if (expr.expr.type === "Variable") {
+				const name = expr.expr.name;
+				const greekLetters = /^[α-ω](_[0-9a-zA-Z]+)?$/;
+				if (greekLetters.test(name) && !enclosingLocals.has(name)) {
+					this.usedImplicitVars.add(name);
+				}
+			}
+		} else if (expr.type === "Prime") {
+			// `f′` where f is a function reference captures f from the enclosing
+			// scope (like ∂f/∂α). For an arrow `(α ↦ …)′` or a field expression
+			// `(expr)′` the derivative is self-contained, so nothing leaks.
 			if (expr.expr.type === "Variable") {
 				const name = expr.expr.name;
 				const greekLetters = /^[α-ω](_[0-9a-zA-Z]+)?$/;

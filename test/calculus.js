@@ -43,29 +43,29 @@ test('Indefinite integral ∫ f(α) dα compiles to integrate(α => f(α))', () 
   assert.equal(programBody(result), 'const F = integrate(α => f(α));');
 });
 
-test('Partial derivative ∂(α² + β²)/∂α selects coordinate 0', () => {
+test('Partial derivative ∂(α² + β²)/∂α is exact (symbolic)', () => {
   const result = compile('p ≔ ∂(α² + β²)/∂α');
-  assert.ok(result.includes('function partial('));
-  assert.equal(programBody(result), 'const p = partial((α, β) => ((α ** 2) + (β ** 2)), 0);');
+  assert.ok(!result.includes('function partial('));
+  assert.equal(programBody(result), 'const p = (α, β) => (2 * α);');
 });
 
-test('Partial derivative ∂(α² + β²)/∂β selects coordinate 1', () => {
+test('Partial derivative ∂(α² + β²)/∂β is exact (symbolic)', () => {
   const result = compile('p ≔ ∂(α² + β²)/∂β');
-  assert.equal(programBody(result), 'const p = partial((α, β) => ((α ** 2) + (β ** 2)), 1);');
+  assert.equal(programBody(result), 'const p = (α, β) => (2 * β);');
 });
 
-test('Partial derivative of a function reference ∂f/∂α', () => {
+test('Partial derivative of a function reference ∂f/∂α uses numeric partial', () => {
   const result = compile('p ≔ ∂f/∂α');
   assert.equal(programBody(result), 'const p = partial(f, 0);');
 });
 
-test('Gradient of a field expression ∇(α² + β²)', () => {
+test('Gradient of a field expression ∇(α² + β²) is exact (symbolic)', () => {
   const result = compile('g ≔ ∇(α² + β²)');
-  assert.ok(result.includes('function gradient('));
-  assert.equal(programBody(result), 'const g = gradient((α, β) => ((α ** 2) + (β ** 2)));');
+  assert.ok(!result.includes('function gradient('));
+  assert.equal(programBody(result), 'const g = (α, β) => [(2 * α), (2 * β)];');
 });
 
-test('Gradient of a function reference ∇f', () => {
+test('Gradient of a function reference ∇f uses numeric gradient', () => {
   const result = compile('g ≔ ∇f');
   assert.equal(programBody(result), 'const g = gradient(f);');
 });
@@ -142,4 +142,104 @@ test('Integral inside a block uses the block local γ', () => {
   const f = new Function(js + '; return g;');
   // ∫₀¹ 2α dα = 1
   assert.ok(Math.abs(f()() - 1) < 1e-9, `got ${f()()}`);
+});
+
+// ---- Symbolic differentiation (exact, no numerical prelude) ----
+
+test('∂(α * β)/∂α uses the product rule', () => {
+  const result = compile('p ≔ ∂(α * β)/∂α');
+  assert.equal(programBody(result), 'const p = (α, β) => β;');
+});
+
+test('∂(1 / α)/∂α uses the quotient rule', () => {
+  const result = compile('p ≔ ∂(1 / α)/∂α');
+  assert.equal(programBody(result), 'const p = α => (-1 / (α ** 2));');
+});
+
+test('∂(√α)/∂α differentiates sqrt', () => {
+  const result = compile('p ≔ ∂(√α)/∂α');
+  assert.equal(programBody(result), 'const p = α => (1 / (2 * Math.sqrt(α)));');
+});
+
+test('∂α/∂α = 1', () => {
+  const result = compile('p ≔ ∂α/∂α');
+  assert.equal(programBody(result), 'const p = α => 1;');
+});
+
+test('Product rule is numerically exact', () => {
+  const { p } = run('p ≔ ∂(α * β)/∂α', ['p']);
+  assert.equal(p(5, 7), 7);
+});
+
+test('Quotient rule is numerically exact', () => {
+  const { p } = run('p ≔ ∂(1 / α)/∂α', ['p']);
+  assert.ok(Math.abs(p(2) - (-0.25)) < 1e-12, `got ${p(2)}`);
+});
+
+test('Sqrt derivative is numerically exact', () => {
+  const { p } = run('p ≔ ∂(√α)/∂α', ['p']);
+  assert.ok(Math.abs(p(4) - 0.25) < 1e-12, `got ${p(4)}`);
+});
+
+test('∂(α² + β²)/∂α is exact at (2, 3) = 4', () => {
+  const { p } = run('p ≔ ∂(α² + β²)/∂α', ['p']);
+  assert.equal(p(2, 3), 4);
+});
+
+test('Symbolic derivative emits no numerical prelude', () => {
+  const result = compile('p ≔ ∂(α²)/∂α');
+  assert.ok(!result.includes('function partial('));
+  assert.ok(!result.includes('function gradient('));
+  assert.ok(!result.includes('function simpson('));
+});
+
+// ---- Prime notation (′) ----
+
+test('f′ compiles to partial(f, 0)', () => {
+  const result = compile('p ≔ f′');
+  assert.equal(programBody(result), 'const p = partial(f, 0);');
+});
+
+test('f″ compiles to nested partial (second derivative)', () => {
+  const result = compile('p ≔ f″');
+  assert.equal(programBody(result), 'const p = partial(partial(f, 0), 0);');
+});
+
+test('(α ↦ α²)′ differentiates the arrow body', () => {
+  const result = compile('p ≔ (α ↦ α²)′');
+  assert.equal(programBody(result), 'const p = α => (2 * α);');
+});
+
+test('(α²)′ differentiates w.r.t. the first Greek variable', () => {
+  const result = compile('p ≔ (α²)′');
+  assert.equal(programBody(result), 'const p = α => (2 * α);');
+});
+
+test('(α² + β²)′ differentiates w.r.t. α (first Greek variable)', () => {
+  const result = compile('p ≔ (α² + β²)′');
+  assert.equal(programBody(result), 'const p = (α, β) => (2 * α);');
+});
+
+test('(α²)″ is the exact second derivative', () => {
+  const result = compile('p ≔ (α²)″');
+  assert.equal(programBody(result), 'const p = α => 2;');
+});
+
+test('(α³)″ is numerically exact at 2', () => {
+  const { p } = run('p ≔ (α³)″', ['p']);
+  assert.equal(p(2), 12);
+});
+
+test('f′ of a defined function is numerically correct', () => {
+  const { p } = run('f ≔ (α, β) ↦ α * β\np ≔ f′', ['p']);
+  assert.ok(Math.abs(p(5, 7) - 7) < 1e-5, `got ${p(5, 7)}`);
+});
+
+test('f″ of a defined cubic is numerically correct', () => {
+  const { p } = run('f ≔ α ↦ α³\np ≔ f″', ['p']);
+  assert.ok(Math.abs(p(2) - 12) < 1e-2, `got ${p(2)}`);
+});
+
+test('Prime on an expression without Greek variables throws', () => {
+  assert.throws(() => compile('p ≔ (2 + 3)′'), /Greek variable/);
 });
