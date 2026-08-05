@@ -243,3 +243,94 @@ test('f″ of a defined cubic is numerically correct', () => {
 test('Prime on an expression without Greek variables throws', () => {
   assert.throws(() => compile('p ≔ (2 + 3)′'), /Greek variable/);
 });
+
+// ---- Elementary function differentiation (chain rule) ----
+
+test('∂sin(α)/∂α emits Math.cos(α)', () => {
+  const result = compile('p ≔ ∂sin(α)/∂α');
+  assert.equal(programBody(result), 'const p = α => Math.cos(α);');
+});
+
+test('∂cos(α)/∂α emits (-Math.sin(α))', () => {
+  const result = compile('p ≔ ∂cos(α)/∂α');
+  assert.equal(programBody(result), 'const p = α => (-Math.sin(α));');
+});
+
+test('∂exp(α)/∂α emits Math.exp(α)', () => {
+  const result = compile('p ≔ ∂exp(α)/∂α');
+  assert.equal(programBody(result), 'const p = α => Math.exp(α);');
+});
+
+test('∂ln(α)/∂α emits (1 / α)', () => {
+  const result = compile('p ≔ ∂ln(α)/∂α');
+  assert.equal(programBody(result), 'const p = α => (1 / α);');
+});
+
+test('Chain rule: ∂(sin(α)²)/∂α', () => {
+  const result = compile('p ≔ ∂(sin(α)²)/∂α');
+  assert.equal(programBody(result), 'const p = α => ((2 * Math.sin(α)) * Math.cos(α));');
+});
+
+// ---- General power rule (variable exponent) ----
+
+test('∂(α^α)/∂α uses the general power rule', () => {
+  const result = compile('p ≔ ∂(α^α)/∂α');
+  assert.equal(programBody(result), 'const p = α => ((α ** α) * (Math.log(α) + 1));');
+});
+
+test('∂(2^α)/∂α: variable exponent with constant base', () => {
+  const result = compile('p ≔ ∂(2^α)/∂α');
+  assert.equal(programBody(result), 'const p = α => ((2 ** α) * Math.log(2));');
+});
+
+test('∂(α^β)/∂α: exponent constant w.r.t. α keeps the classic rule', () => {
+  const result = compile('p ≔ ∂(α^β)/∂α');
+  assert.equal(programBody(result), 'const p = (α, β) => (β * (α ** (β - 1)));');
+});
+
+// ---- Numeric execution of elementary/general-power derivatives ----
+
+test('∂sin(α)/∂α at 0 ≈ 1', () => {
+  const { p } = run('p ≔ ∂sin(α)/∂α', ['p']);
+  assert.ok(Math.abs(p(0) - 1) < 1e-6, `got ${p(0)}`);
+});
+
+test('∂cos(α)/∂α at 0 ≈ 0', () => {
+  const { p } = run('p ≔ ∂cos(α)/∂α', ['p']);
+  assert.ok(Math.abs(p(0)) < 1e-6, `got ${p(0)}`);
+});
+
+test('∂exp(α)/∂α at 0 ≈ 1', () => {
+  const { p } = run('p ≔ ∂exp(α)/∂α', ['p']);
+  assert.ok(Math.abs(p(0) - 1) < 1e-6, `got ${p(0)}`);
+});
+
+test('∂ln(α)/∂α at 1 ≈ 1', () => {
+  const { p } = run('p ≔ ∂ln(α)/∂α', ['p']);
+  assert.ok(Math.abs(p(1) - 1) < 1e-6, `got ${p(1)}`);
+});
+
+test('∂(α^α)/∂α at 2 ≈ 2²·(ln 2 + 1)', () => {
+  const { p } = run('p ≔ ∂(α^α)/∂α', ['p']);
+  assert.ok(Math.abs(p(2) - 4 * (Math.log(2) + 1)) < 1e-6, `got ${p(2)}`);
+});
+
+test('∂(2^α)/∂α at 3 ≈ 2³·ln 2', () => {
+  const { p } = run('p ≔ ∂(2^α)/∂α', ['p']);
+  assert.ok(Math.abs(p(3) - 8 * Math.log(2)) < 1e-6, `got ${p(3)}`);
+});
+
+test('f′ of α ↦ sin(α) at 0 ≈ 1', () => {
+  const { p } = run('f ≔ α ↦ sin(α)\np ≔ f′', ['p']);
+  assert.ok(Math.abs(p(0) - 1) < 1e-2, `got ${p(0)}`);
+});
+
+test('(sin(α))″ at 0 ≈ 0', () => {
+  const { p } = run('p ≔ (sin(α))″', ['p']);
+  assert.ok(Math.abs(p(0)) < 2e-2, `got ${p(0)}`);
+});
+
+test('∂cos(α)/∂α evaluates (-Math.sin(α)): at π/2 ≈ -1', () => {
+  const { p } = run('p ≔ ∂cos(α)/∂α', ['p']);
+  assert.ok(Math.abs(p(Math.PI / 2) - (-1)) < 1e-6, `got ${p(Math.PI / 2)}`);
+});

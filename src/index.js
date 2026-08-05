@@ -1016,6 +1016,39 @@ function topoSortDefs(defs) {
  * True if `node` may depend on the variable `varName` (used to decide whether
  * a power/exponent is constant w.r.t. the differentiation variable).
  */
+// Builtin math function names recognized in function calls; the generator
+// emits the corresponding Math.* member so the output is valid JS.
+const BUILTIN_MATH_FUNCS = {
+	sin: "Math.sin",
+	cos: "Math.cos",
+	exp: "Math.exp",
+	ln: "Math.log",
+	sqrt: "Math.sqrt",
+};
+
+function sameNode(a, b) {
+	if (a.type !== b.type) return false;
+	switch (a.type) {
+		case "Literal":
+			return a.value === b.value;
+		case "Variable":
+		case "Constant":
+			return a.name === b.name;
+		case "UnaryOp":
+			return a.op === b.op && sameNode(a.argument, b.argument);
+		case "BinaryOp":
+			return a.op === b.op && sameNode(a.left, b.left) && sameNode(a.right, b.right);
+		case "FunctionCall":
+			return (
+				sameNode(a.callee, b.callee) &&
+				a.args.length === b.args.length &&
+				a.args.every((x, i) => sameNode(x, b.args[i]))
+			);
+		default:
+			return false;
+	}
+}
+
 function dependsOn(node, varName) {
 	if (node.type === "Variable") return node.name === varName;
 	if (node.type === "Literal" || node.type === "Constant") return false;
@@ -1046,9 +1079,15 @@ function differentiate(expr, varName) {
 				? { type: "Literal", value: 1 }
 				: { type: "Literal", value: 0 };
 
-		case "UnaryOp":
-			// Only logical negation exists; not differentiable.
+		case "UnaryOp": {
+			// Numeric negation: d(−u) = −u'. Logical negation is not differentiable.
+			if (expr.op === "-") {
+				const d = differentiate(expr.argument, varName);
+				if (d === null) return null;
+				return { type: "UnaryOp", op: "-", argument: d };
+			}
 			return null;
+		}
 
 		case "BinaryOp": {
 			const { left, right, op } = expr;
@@ -1094,20 +1133,68 @@ function differentiate(expr, varName) {
 					const coef = { type: "BinaryOp", op: "*", left: right, right: pow };
 					return { type: "BinaryOp", op: "*", left: coef, right: dl };
 				}
-				// Variable exponent needs ln(u); not supported symbolically.
-				return null;
+				// General power rule (variable exponent):
+				// d(u^v) = u^v·(v'·ln(u) + v·u'/u)
+				const dl = differentiate(left, varName);
+				const dr = differentiate(right, varName);
+				if (dl === null || dr === null) return null;
+				const lnu = {
+					type: "FunctionCall",
+					callee: { type: "Variable", name: "ln" },
+					args: [left],
+				};
+				const vPrimeLn = { type: "BinaryOp", op: "*", left: dr, right: lnu };
+				const vDivU = {
+					type: "BinaryOp",
+					op: "/",
+					left: { type: "BinaryOp", op: "*", left: right, right: dl },
+					right: left,
+				};
+				const inner = { type: "BinaryOp", op: "+", left: vPrimeLn, right: vDivU };
+				return { type: "BinaryOp", op: "*", left: expr, right: inner };
 			}
 			// Set ops, comparisons, composition, etc. — not differentiable.
 			return null;
 		}
 
 		case "FunctionCall": {
+			const calleeName =
+				expr.callee && expr.callee.type === "Variable" ? expr.callee.name : null;
 			// d(sqrt(u)) = u' / (2·sqrt(u))
-			if (expr.callee && expr.callee.type === "Variable" && expr.callee.name === "Math.sqrt" && expr.args.length === 1) {
+			if (calleeName === "Math.sqrt" && expr.args.length === 1) {
 				const du = differentiate(expr.args[0], varName);
 				if (du === null) return null;
 				const den = { type: "BinaryOp", op: "*", left: { type: "Literal", value: 2 }, right: expr };
 				return { type: "BinaryOp", op: "/", left: du, right: den };
+			}
+			// Elementary functions (chain rule): d(f(u)) = f'(u)·u'
+			if (expr.args.length === 1) {
+				const u = expr.args[0];
+				const du = differentiate(u, varName);
+				if (du === null) return null;
+				const mkCall = (name) => ({
+					type: "FunctionCall",
+					callee: { type: "Variable", name },
+					args: [u],
+				});
+				if (calleeName === "sin") {
+					return { type: "BinaryOp", op: "*", left: mkCall("cos"), right: du };
+				}
+				if (calleeName === "cos") {
+					return {
+						type: "BinaryOp",
+						op: "*",
+						left: { type: "UnaryOp", op: "-", argument: mkCall("sin") },
+						right: du,
+					};
+				}
+				if (calleeName === "exp") {
+					return { type: "BinaryOp", op: "*", left: mkCall("exp"), right: du };
+				}
+				if (calleeName === "ln") {
+					// d(ln u) = u' / u
+					return { type: "BinaryOp", op: "/", left: du, right: u };
+				}
 			}
 			return null;
 		}
@@ -1153,6 +1240,8 @@ function simplifyExpr(node) {
 		if (op === "*" && isZero(right)) return { type: "Literal", value: 0 };
 		if (op === "*" && isZero(left)) return { type: "Literal", value: 0 };
 		if (op === "/" && isOne(right)) return left;
+		if (op === "/" && isZero(left)) return { type: "Literal", value: 0 };
+		if (op === "/" && sameNode(left, right)) return { type: "Literal", value: 1 };
 		if (op === "**" && isOne(right)) return left;
 		if (op === "**" && isZero(right)) return { type: "Literal", value: 1 };
 		if (op === "**" && isOne(left)) return { type: "Literal", value: 1 };
@@ -1160,7 +1249,13 @@ function simplifyExpr(node) {
 		return { type: "BinaryOp", op, left, right };
 	}
 	if (node.type === "UnaryOp") {
-		return { type: "UnaryOp", op: node.op, argument: simplifyExpr(node.argument) };
+		const argument = simplifyExpr(node.argument);
+		if (node.op === "-") {
+			// −0 → 0, −(literal) → negated literal, −(−x) → x
+			if (argument.type === "Literal") return { type: "Literal", value: -argument.value };
+			if (argument.type === "UnaryOp" && argument.op === "-") return argument.argument;
+		}
+		return { type: "UnaryOp", op: node.op, argument };
 	}
 	if (node.type === "FunctionCall") {
 		return { type: "FunctionCall", callee: node.callee, args: node.args.map(simplifyExpr) };
@@ -1326,6 +1421,9 @@ export class Generator {
 		}
 
 		if (expr.type === "UnaryOp") {
+			if (expr.op === "-") {
+				return `(-${this.generateExpression(expr.argument)})`;
+			}
 			return `(!${this.generateExpression(expr.argument)})`;
 		}
 
@@ -1392,7 +1490,11 @@ export class Generator {
 		}
 
 		if (expr.type === "FunctionCall") {
-			const callee = this.generateExpression(expr.callee);
+			let callee = this.generateExpression(expr.callee);
+			// Map known math function names to JS Math.* (e.g. sin(α) → Math.sin(α)).
+			if (expr.callee && expr.callee.type === "Variable" && BUILTIN_MATH_FUNCS[expr.callee.name]) {
+				callee = BUILTIN_MATH_FUNCS[expr.callee.name];
+			}
 			const args = expr.args.map((arg) => this.generateExpression(arg)).join(", ");
 			return `${callee}(${args})`;
 		}
