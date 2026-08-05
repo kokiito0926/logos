@@ -21,6 +21,50 @@ function isSubscriptChar(ch) {
 	return SUBSCRIPT_MAP[ch] !== undefined || /[₀-₉]/.test(ch);
 }
 
+/**
+ * Runtime helpers for calculus symbols (∫, ∂, ∇). This prelude is prepended to
+ * the generated JavaScript only when the source program uses one of those
+ * symbols. All helpers use numerical methods:
+ *   - simpson:   composite Simpson's rule for definite integrals
+ *   - integrate: indefinite ∫ returns a function (lo, hi) => ∫_lo^hi f
+ *   - partial:   ∂f/∂xᵢ returns a function (...point) => central finite
+ *                difference of f along coordinate index i
+ *   - gradient:  ∇f returns a vector field (...point) => [∂f/∂x1, ∂f/∂x2, ...]
+ */
+const CALCULUS_PRELUDE = `// Logos calculus runtime helpers (generated because ∫, ∂, or ∇ is used)
+function simpson(a, b, f, n = 1000) {
+    if (n % 2 !== 0) n++;
+    const h = (b - a) / n;
+    let sum = f(a) + f(b);
+    for (let i = 1; i < n; i++) {
+        sum += (i % 2 === 0 ? 2 : 4) * f(a + i * h);
+    }
+    return (sum * h) / 3;
+}
+function integrate(f) {
+    return (lo, hi) => simpson(lo, hi, f);
+}
+function partial(f, index, h = 1e-6) {
+    return (...point) => {
+        const hi = [...point];
+        hi[index] += h;
+        const lo = [...point];
+        lo[index] -= h;
+        return (f(...hi) - f(...lo)) / (2 * h);
+    };
+}
+function gradient(f, h = 1e-6) {
+    const n = f.length || 1;
+    return (...point) => Array.from({ length: n }, (_, i) => {
+        const hi = [...point];
+        hi[i] += h;
+        const lo = [...point];
+        lo[i] -= h;
+        return (f(...hi) - f(...lo)) / (2 * h);
+    });
+}
+`;
+
 
 /**
  * Collect the names from `innerNames` that occur as free variables in `expr`
@@ -341,6 +385,10 @@ export class Lexer {
 				"→": "ARROW",
 				"∘": "COMPOSE",
 				"‥": "RANGE",
+				"∫": "INT",
+				"∂": "PARTIAL",
+				"∇": "NABLA",
+				"∮": "CONTOUR",
 			};
 
 			// Track bracket depth so newlines inside parens/brackets are insignificant.
@@ -711,6 +759,12 @@ export class Parser {
 		let left = this.parseUnary();
 
 		while (this.match("MUL", "DIV", "CARTESIAN")) {
+			// `expr /∂ var` is not division: it is the trailing part of a
+			// partial derivative (∂ expr /∂ var). Stop so the enclosing
+			// parsePrimary PARTIAL handler can consume it.
+			if (this.peek().type === "DIV" && this.peek(1) && this.peek(1).type === "PARTIAL") {
+				break;
+			}
 			const op = this.advance().value;
 			const right = this.parseUnary();
 			left = { type: "BinaryOp", op, left, right };
@@ -852,6 +906,66 @@ export class Parser {
 			return { type: "FunctionCall", callee: { type: "Variable", name: "Math.sqrt" }, args: [arg] };
 		}
 
+		// Partial derivative: ∂ expr /∂ var  (e.g. ∂(α² + β²)/∂α)
+		if (token.type === "PARTIAL") {
+			this.advance(); // consume ∂
+			const expr = this.parseExpression(); // stops before `/∂ var` (see parseMultiplicative)
+			this.expect("DIV");
+			this.expect("PARTIAL");
+			const varName = this.expect("IDENT").value;
+			return { type: "PartialDerivative", expr, var: varName };
+		}
+
+		// Integral: ∫ lower⁺upper f d<var>  (e.g. ∫₀¹ α² dα) or ∫ f d<var>
+		if (token.type === "INT") {
+			this.advance(); // consume ∫
+			let lower = null;
+			let upper = null;
+			if (this.match("SUBSCRIPT")) {
+				const sub = this.advance();
+				lower = isNaN(Number(sub.value))
+					? { type: "Variable", name: sub.value }
+					: { type: "Literal", value: Number(sub.value) };
+			}
+			if (this.match("SUPERSCRIPT")) {
+				upper = { type: "Literal", value: this.advance().value };
+			}
+			if ((lower !== null) !== (upper !== null)) {
+				throw new Error("Integral ∫ requires both a lower and an upper bound (e.g. ∫₀¹ f dα) or neither");
+			}
+			const integrand = this.parseExpression(); // stops before `d <var>` or `dα`
+			const next = this.peek();
+			const nextNext = this.peek(1);
+			if (next && next.type === "IDENT") {
+				// `dα`, `dx`, `df` … the lexer fuses `d` and the variable into a
+				// single identifier, so split off a leading `d`.
+				const m = /^d([a-zA-Z_α-ω])$/.exec(next.value);
+				if (m) {
+					this.advance(); // consume d<var>
+					return { type: "Integral", integrand, var: m[1], lower, upper };
+				}
+				// `d α` written with a space → two separate tokens.
+				if (next.value === "d" && nextNext && nextNext.type === "IDENT") {
+					this.advance(); // consume d
+					const varName = this.advance().value;
+					return { type: "Integral", integrand, var: varName, lower, upper };
+				}
+			}
+			throw new Error(`Integral ∫ requires a differential "d<variable>" (e.g. ∫₀¹ α² dα), got ${next ? next.type : "EOF"}`);
+		}
+
+		// Gradient / nabla: ∇f (f is a function reference) or ∇(expr) (a field expression)
+		if (token.type === "NABLA") {
+			this.advance(); // consume ∇
+			const expr = this.parseUnary();
+			return { type: "Gradient", expr };
+		}
+
+		// Contour integral needs a complex-number runtime — not implemented yet.
+		if (token.type === "CONTOUR") {
+			throw new Error("∮（周回積分）は複素数ランタイムが必要なため、現在は実装されていません");
+		}
+
 		if (token.type === "LPAREN") {
 			this.advance();
 			const expr = this.parseExpression();
@@ -901,11 +1015,15 @@ export class Generator {
 		// implicit arguments).
 		this.currentLocals = new Set();
 		this.blockDepth = 0;
+		// Set to true when ∫, ∂, or ∇ is generated; controls whether the
+		// calculus runtime prelude is prepended to the output.
+		this.usesCalculus = false;
 	}
 
 	generate() {
 		const statements = this.ast.body.map((stmt) => this.generateStatement(stmt));
-		return statements.join("\n");
+		const body = statements.join("\n");
+		return this.usesCalculus ? `${CALCULUS_PRELUDE}${body}` : body;
 	}
 
 	generateStatement(stmt) {
@@ -1164,6 +1282,84 @@ export class Generator {
 			return this.generateBlockExpression(expr, this.currentLocals);
 		}
 
+		if (expr.type === "Integral") {
+			this.usesCalculus = true;
+			// `∫ f dα` where f is a function reference → simpson/integrate(f).
+			if (expr.integrand.type === "Variable" && expr.integrand.name !== expr.var) {
+				const f = this.generateExpression(expr.integrand);
+				if (expr.lower && expr.upper) {
+					const lower = this.generateExpression(expr.lower);
+					const upper = this.generateExpression(expr.upper);
+					return `simpson(${lower}, ${upper}, ${f})`;
+				}
+				return `integrate(${f})`;
+			}
+			// Otherwise bind the integration variable to an arrow:
+			// `∫₀¹ α² dα` → simpson(0, 1, α => (α ** 2)).
+			const integrand = this.generateExpression({
+				type: "ArrowFunction",
+				params: [expr.var],
+				body: expr.integrand,
+			});
+			if (expr.lower && expr.upper) {
+				const lower = this.generateExpression(expr.lower);
+				const upper = this.generateExpression(expr.upper);
+				return `simpson(${lower}, ${upper}, ${integrand})`;
+			}
+			return `integrate(${integrand})`;
+		}
+
+		if (expr.type === "PartialDerivative") {
+			this.usesCalculus = true;
+			// `∂f/∂α` where f is a function reference → differentiate along its
+			// first coordinate: partial(f, 0).
+			if (expr.expr.type === "Variable" && expr.expr.name !== expr.var) {
+				return `partial(${this.generateExpression(expr.expr)}, 0)`;
+			}
+			// Otherwise bind every free Greek letter of the field to an arrow
+			// parameter and pick the index of the differentiation variable:
+			// `∂(α² + β²)/∂β` → partial((α, β) => ((α ** 2) + (β ** 2)), 1).
+			const tempGen = new Generator({ body: [] });
+			tempGen.collectImplicitVars(expr.expr, this.currentLocals);
+			const params = Array.from(tempGen.usedImplicitVars).sort();
+			const index = params.indexOf(expr.var);
+			if (index === -1) {
+				// var is not a Greek letter present in the field; fall back to
+				// the first coordinate.
+				const arrow = this.generateExpression({
+					type: "ArrowFunction",
+					params: [expr.var],
+					body: expr.expr,
+				});
+				return `partial(${arrow}, 0)`;
+			}
+			const arrow = this.generateExpression({
+				type: "ArrowFunction",
+				params,
+				body: expr.expr,
+			});
+			return `partial(${arrow}, ${index})`;
+		}
+
+		if (expr.type === "Gradient") {
+			this.usesCalculus = true;
+			// `∇f` where f is a function reference → gradient(f).
+			if (expr.expr.type === "Variable") {
+				return `gradient(${this.generateExpression(expr.expr)})`;
+			}
+			// `∇(expr)` → bind all free Greek letters of the field as arrow
+			// parameters: ∇(α² + β²) → gradient((α, β) => (α² + β²)).
+			const tempGen = new Generator({ body: [] });
+			tempGen.collectImplicitVars(expr.expr, this.currentLocals);
+			const params = Array.from(tempGen.usedImplicitVars).sort();
+			const arrow = this.generateExpression({
+				type: "ArrowFunction",
+				params,
+				body: expr.expr,
+			});
+			return `gradient(${arrow})`;
+		}
+
 		throw new Error(`Unknown expression type: ${expr.type}`);
 	}
 
@@ -1220,6 +1416,45 @@ export class Generator {
 			// A nested block is self-contained: its own definitions shadow enclosing
 			// locals, and its implicit arguments are computed when it is generated.
 			// Nothing is contributed to the enclosing scope here.
+		} else if (expr.type === "Integral") {
+			// Bounds are evaluated in the outer scope.
+			if (expr.lower) this.collectImplicitVars(expr.lower, enclosingLocals);
+			if (expr.upper) this.collectImplicitVars(expr.upper, enclosingLocals);
+			// The integration variable is bound inside the generated arrow
+			// (var => integrand); other free Greek letters are captured from
+			// the enclosing scope.
+			const tempGen = new Generator({ body: [] });
+			tempGen.collectImplicitVars(expr.integrand, enclosingLocals);
+			tempGen.usedImplicitVars.forEach((v) => {
+				if (v !== expr.var) {
+					this.usedImplicitVars.add(v);
+				}
+			});
+		} else if (expr.type === "PartialDerivative") {
+			// `∂f/∂α` where f is a function reference captures f from the
+			// enclosing scope; the differentiation variable α only selects the
+			// coordinate and is not bound. For a field expression
+			// `∂(expr)/∂α` the derivative is self-contained: every free Greek
+			// letter of expr becomes an arrow parameter, so nothing leaks.
+			if (expr.expr.type === "Variable" && expr.expr.name !== expr.var) {
+				const name = expr.expr.name;
+				const greekLetters = /^[α-ω](_[0-9a-zA-Z]+)?$/;
+				if (greekLetters.test(name) && !enclosingLocals.has(name)) {
+					this.usedImplicitVars.add(name);
+				}
+			}
+		} else if (expr.type === "Gradient") {
+			// `∇f` where f is a function reference captures f from the enclosing
+			// scope. For a field expression `∇(expr)` the gradient is
+			// self-contained: every free Greek letter of expr becomes an arrow
+			// parameter, so nothing leaks.
+			if (expr.expr.type === "Variable") {
+				const name = expr.expr.name;
+				const greekLetters = /^[α-ω](_[0-9a-zA-Z]+)?$/;
+				if (greekLetters.test(name) && !enclosingLocals.has(name)) {
+					this.usedImplicitVars.add(name);
+				}
+			}
 		}
 	}
 }
