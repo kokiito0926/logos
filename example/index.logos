@@ -18,3 +18,5 @@ total ≔ μ s
     s ← s + α
     α ← α + 1
     α > 10
+residue ≔ ∮ (1/α) dα
+pole_out ≔ ∮ (1/(α - 2)) dα

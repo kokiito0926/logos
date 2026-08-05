@@ -64,6 +64,40 @@ function gradient(f, h = 1e-6) {
     });
 }
 `;
+const COMPLEX_PRELUDE = `// Logos complex-number runtime (generated because ∮ is used)
+function C(x) { return typeof x === "number" ? { re: x, im: 0 } : x; }
+function cre(z) { return C(z).re; }
+function cim(z) { return C(z).im; }
+function cabs(z) { z = C(z); return Math.hypot(z.re, z.im); }
+function cconj(z) { z = C(z); return { re: z.re, im: -z.im }; }
+function cadd(a, b) { a = C(a); b = C(b); return { re: a.re + b.re, im: a.im + b.im }; }
+function csub(a, b) { a = C(a); b = C(b); return { re: a.re - b.re, im: a.im - b.im }; }
+function cmul(a, b) { a = C(a); b = C(b); return { re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re }; }
+function cdiv(a, b) { a = C(a); b = C(b); const d = b.re * b.re + b.im * b.im; return { re: (a.re * b.re + a.im * b.im) / d, im: (a.im * b.re - a.re * b.im) / d }; }
+function cneg(z) { z = C(z); return { re: -z.re, im: -z.im }; }
+function cexp(z) { z = C(z); return { re: Math.exp(z.re) * Math.cos(z.im), im: Math.exp(z.re) * Math.sin(z.im) }; }
+function clog(z) { z = C(z); return { re: Math.log(Math.hypot(z.re, z.im)), im: Math.atan2(z.im, z.re) }; }
+function csqrt(z) { z = C(z); const r = Math.hypot(z.re, z.im); return { re: Math.sqrt((r + z.re) / 2), im: Math.sign(z.im || 1) * Math.sqrt((r - z.re) / 2) }; }
+function csin(z) { z = C(z); return { re: Math.sin(z.re) * Math.cosh(z.im), im: Math.cos(z.re) * Math.sinh(z.im) }; }
+function ccos(z) { z = C(z); return { re: Math.cos(z.re) * Math.cosh(z.im), im: -Math.sin(z.re) * Math.sinh(z.im) }; }
+function ctan(z) { z = C(z); return cdiv(csin(z), ccos(z)); }
+function cpow(a, b) { a = C(a); b = C(b); if (b.im === 0 && Number.isInteger(b.re)) { let r = { re: 1, im: 0 }; let base = a; let n = Math.abs(b.re); while (n > 0) { if (n % 2 === 1) r = cmul(r, base); base = cmul(base, base); n = Math.floor(n / 2); } return b.re < 0 ? cdiv(1, r) : r; } return cexp(cmul(b, clog(a))); }
+function contour(f, n = 2000) {
+    if (n % 2 !== 0) n++;
+    const h = 1 / n;
+    const twoPiI = { re: 0, im: 2 * Math.PI };
+    let sum = null;
+    for (let i = 0; i <= n; i++) {
+        const t = i * h;
+        const e = cexp({ re: 0, im: 2 * Math.PI * t });
+        const dz = cmul(twoPiI, e);
+        const w = cmul(f(e), dz);
+        const coeff = i === 0 || i === n ? 1 : i % 2 === 0 ? 2 : 4;
+        sum = sum === null ? cmul(coeff, w) : cadd(sum, cmul(coeff, w));
+    }
+    return cmul(sum, h / 3);
+}
+`;
 
 
 /**
@@ -1048,9 +1082,29 @@ export class Parser {
 			return { type: "Gradient", expr };
 		}
 
-		// Contour integral needs a complex-number runtime — not implemented yet.
+		// Contour integral: ∮ f d<var> — complex line integral around the
+		// unit circle (center 0, radius 1). Mirrors the ∫ parser but without bounds.
 		if (token.type === "CONTOUR") {
-			throw new Error("∮（周回積分）は複素数ランタイムが必要なため、現在は実装されていません");
+			this.advance(); // consume ∮
+			const integrand = this.parseExpression(); // stops before `d <var>` or `dα`
+			const next = this.peek();
+			const nextNext = this.peek(1);
+			if (next && next.type === "IDENT") {
+				// `dα`, `dz`, `df` … the lexer fuses `d` and the variable into a
+				// single identifier, so split off a leading `d`.
+				const m = /^d([a-zA-Z_α-ω])$/.exec(next.value);
+				if (m) {
+					this.advance(); // consume d<var>
+					return { type: "ContourIntegral", integrand, var: m[1] };
+				}
+				// `d α` written with a space → two separate tokens.
+				if (next.value === "d" && nextNext && nextNext.type === "IDENT") {
+					this.advance(); // consume d
+					const varName = this.advance().value;
+					return { type: "ContourIntegral", integrand, var: varName };
+				}
+			}
+			throw new Error(`Contour integral ∮ requires a differential "d<variable>" (e.g. ∮ (1/α) dα), got ${next ? next.type : "EOF"}`);
 		}
 
 		if (token.type === "LPAREN") {
@@ -1357,12 +1411,22 @@ export class Generator {
 		// Set to true when ∫, ∂, or ∇ is generated; controls whether the
 		// calculus runtime prelude is prepended to the output.
 		this.usesCalculus = false;
+		this.usesComplex = false;
+		// True while generating a contour-integral integrand, so arithmetic
+		// operators are rewritten to complex-number function calls.
+		this.complexMode = false;
+		// Nesting depth of complex-mode binary ops, used to parenthesize
+		// nested c* calls inside a contour integrand.
+		this.complexDepth = 0;
 	}
 
 	generate() {
 		const statements = this.ast.body.map((stmt) => this.generateStatement(stmt));
 		const body = statements.join("\n");
-		return this.usesCalculus ? `${CALCULUS_PRELUDE}${body}` : body;
+		const prelude =
+			(this.usesCalculus ? CALCULUS_PRELUDE : "") +
+			(this.usesComplex ? COMPLEX_PRELUDE : "");
+		return `${prelude}${body}`;
 	}
 
 	generateStatement(stmt) {
@@ -1535,6 +1599,9 @@ export class Generator {
 
 		if (expr.type === "UnaryOp") {
 			if (expr.op === "-") {
+				if (this.complexMode) {
+					return `cneg(${this.generateExpression(expr.argument)})`;
+				}
 				return `(-${this.generateExpression(expr.argument)})`;
 			}
 			return `(!${this.generateExpression(expr.argument)})`;
@@ -1547,6 +1614,23 @@ export class Generator {
 		}
 
 		if (expr.type === "BinaryOp") {
+			// Complex-mode arithmetic inside a contour integrand: JS has no
+			// operator overloading, so +, -, *, /, ** become cadd/csub/cmul/cdiv/cpow.
+			// Standalone operations stay bare (`α²` → cpow(α, 2)); nested
+			// operations are parenthesized to keep the source shape
+			// (`1/(α-2)` → (cdiv(1, (csub(α, 2))))).
+			if (this.complexMode && ["+", "-", "*", "/", "**"].includes(expr.op)) {
+				const complexOp = { "+": "cadd", "-": "csub", "*": "cmul", "/": "cdiv", "**": "cpow" }[expr.op];
+				const nested = this.complexDepth > 0;
+				this.complexDepth++;
+				const left = this.generateExpression(expr.left);
+				const right = this.generateExpression(expr.right);
+				this.complexDepth--;
+				const call = `${complexOp}(${left}, ${right})`;
+				return nested || expr.left.type === "BinaryOp" || expr.right.type === "BinaryOp"
+					? `(${call})`
+					: call;
+			}
 			const left = this.generateExpression(expr.left);
 			const right = this.generateExpression(expr.right);
 			if (expr.op === "⇒") {
@@ -1612,6 +1696,14 @@ export class Generator {
 			// Map known math function names to JS Math.* (e.g. sin(α) → Math.sin(α)).
 			if (expr.callee && expr.callee.type === "Variable" && BUILTIN_MATH_FUNCS[expr.callee.name]) {
 				callee = BUILTIN_MATH_FUNCS[expr.callee.name];
+			}
+			// Complex mode: sin/cos/exp/ln/sqrt become their complex analogues.
+			// `√α` parses with callee name "Math.sqrt", so map both spellings.
+			if (this.complexMode && expr.callee && expr.callee.type === "Variable") {
+				const complexMath = { sin: "csin", cos: "ccos", exp: "cexp", ln: "clog", sqrt: "csqrt", "Math.sqrt": "csqrt" };
+				if (complexMath[expr.callee.name]) {
+					callee = complexMath[expr.callee.name];
+				}
 			}
 			const args = expr.args.map((arg) => this.generateExpression(arg)).join(", ");
 			return `${callee}(${args})`;
@@ -1722,6 +1814,25 @@ export class Generator {
 				return `simpson(${lower}, ${upper}, ${integrand})`;
 			}
 			return `integrate(${integrand})`;
+		}
+
+		if (expr.type === "ContourIntegral") {
+			this.usesComplex = true;
+			// `∮ f dα` where f is a function reference → contour(f).
+			if (expr.integrand.type === "Variable" && expr.integrand.name !== expr.var) {
+				return `contour(${this.generateExpression(expr.integrand)})`;
+			}
+			// Otherwise bind the integration variable with complex-mode
+			// arithmetic: `∮ (1/α) dα` → contour(α => (cdiv(1, α))).
+			const prevComplex = this.complexMode;
+			this.complexMode = true;
+			const integrand = this.generateExpression({
+				type: "ArrowFunction",
+				params: [expr.var],
+				body: expr.integrand,
+			});
+			this.complexMode = prevComplex;
+			return `contour(${integrand})`;
 		}
 
 		if (expr.type === "PartialDerivative") {
@@ -1969,6 +2080,17 @@ export class Generator {
 			// The integration variable is bound inside the generated arrow
 			// (var => integrand); other free Greek letters are captured from
 			// the enclosing scope.
+			const tempGen = new Generator({ body: [] });
+			tempGen.collectImplicitVars(expr.integrand, enclosingLocals);
+			tempGen.usedImplicitVars.forEach((v) => {
+				if (v !== expr.var) {
+					this.usedImplicitVars.add(v);
+				}
+			});
+		} else if (expr.type === "ContourIntegral") {
+			// The integration variable is bound inside the generated arrow
+			// (var => complex-mode integrand); other free Greek letters are
+			// captured from the enclosing scope.
 			const tempGen = new Generator({ body: [] });
 			tempGen.collectImplicitVars(expr.integrand, enclosingLocals);
 			tempGen.usedImplicitVars.forEach((v) => {

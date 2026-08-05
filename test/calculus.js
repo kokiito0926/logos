@@ -79,8 +79,9 @@ test('Prelude is injected only when a calculus symbol is used', () => {
   assert.ok(!plain.includes('function gradient('));
 });
 
-test('∮ throws: contour integral needs a complex-number runtime', () => {
-  assert.throws(() => compile('r ≔ ∮ f dz'), /∮/);
+test('∮ over a function reference passes the function directly to contour', () => {
+  const result = compile('r ≔ ∮ f dz');
+  assert.ok(result.includes('const r = contour(f);'));
 });
 
 test('Integral with only one bound throws', () => {
