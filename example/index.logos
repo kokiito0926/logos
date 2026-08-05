@@ -5,3 +5,11 @@ multiply ≔ α * β
 in_set ≔ α ∈ set
 range1to10 ≔ 1‥10
 exclusive_range ≔ 0‥<n
+
+abs ≔
+    α ≥ 0 ⇒ α
+    ⊤     ⇒ −α
+
+adult ≔ ⟦age ≥ 18⟧
+
+n ≔ μ α (α² ≥ 100)

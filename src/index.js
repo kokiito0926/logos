@@ -93,6 +93,16 @@ function collectInnerRefs(expr, innerNames) {
 			walk(node.body, nextBound);
 			return;
 		}
+		if (node.type === "Iverson") {
+			walk(node.expr, bound);
+			return;
+		}
+		if (node.type === "Minimize") {
+			const nextBound = new Set(bound);
+			nextBound.add(node.var);
+			walk(node.body, nextBound);
+			return;
+		}
 		if (node.type === "UnaryOp") {
 			walk(node.argument, bound);
 			return;
@@ -292,6 +302,13 @@ export class Lexer {
 				continue;
 			}
 
+			// μ is the minimalization (while) operator — a reserved keyword
+			if (char === "μ") {
+				this.advance();
+				tokens.push({ type: "MU", value: "μ" });
+				continue;
+			}
+
 			// Identifiers (Greek letters, Latin letters, underscores, digits)
 			if (/[a-zA-Z_α-ω]/.test(char)) {
 				let ident = "";
@@ -332,6 +349,13 @@ export class Lexer {
 				this.advance();
 				this.advance();
 				tokens.push({ type: "PIPE", value: "|>" });
+				continue;
+			}
+
+			// U+2212 (mathematical minus sign) is an alias for ASCII '-'
+			if (char === "−") {
+				this.advance();
+				tokens.push({ type: "MINUS", value: "-" });
 				continue;
 			}
 
@@ -391,11 +415,13 @@ export class Lexer {
 				"∮": "CONTOUR",
 				"′": "PRIME",
 				"″": "DOUBLE_PRIME",
+				"⟦": "IVERSON_OPEN",
+				"⟧": "IVERSON_CLOSE",
 			};
 
 			// Track bracket depth so newlines inside parens/brackets are insignificant.
-			if (char === "(" || char === "[") this.parenDepth++;
-			if (char === ")" || char === "]") this.parenDepth = Math.max(0, this.parenDepth - 1);
+			if (char === "(" || char === "[" || char === "⟦") this.parenDepth++;
+			if (char === ")" || char === "]" || char === "⟧") this.parenDepth = Math.max(0, this.parenDepth - 1);
 
 			if (symbolMap[char]) {
 				tokens.push({ type: symbolMap[char], value: this.advance() });
@@ -506,6 +532,16 @@ export class Parser {
 	}
 
 	parseQuantifier() {
+		if (this.match("MU")) {
+			// μ α (P(α)) — minimalization: the smallest α ≥ 0 with P(α) true.
+			this.advance();
+			const boundVar = this.expect("IDENT").value;
+			this.expect("LPAREN");
+			const body = this.parseExpression();
+			this.expect("RPAREN");
+			return { type: "Minimize", var: boundVar, body };
+		}
+
 		if (this.match("FORALL", "EXISTS", "NOTEXISTS", "SUM", "PRODUCT")) {
 			const quant = this.advance();
 			const boundVar = this.expect("IDENT").value;
@@ -781,6 +817,12 @@ export class Parser {
 			return { type: "UnaryOp", op: "!", argument: this.parseUnary() };
 		}
 
+		// Unary minus: −α, -α (binds looser than exponentiation, so −α² = −(α²)).
+		if (this.match("MINUS")) {
+			this.advance();
+			return { type: "UnaryOp", op: "-", argument: this.parseUnary() };
+		}
+
 		return this.parseExponentiation();
 	}
 
@@ -880,6 +922,14 @@ export class Parser {
 		if (token.type === "FALSE") {
 			this.advance();
 			return { type: "Literal", value: false };
+		}
+
+		// Iverson bracket: ⟦P⟧ → 1 when P is true, 0 otherwise.
+		if (token.type === "IVERSON_OPEN") {
+			this.advance();
+			const expr = this.parseExpression();
+			this.expect("IVERSON_CLOSE");
+			return { type: "Iverson", expr };
 		}
 
 		if (token.type === "EMPTYSET") {
@@ -1372,16 +1422,48 @@ export class Generator {
 			const value = this.generateExpression(defByName.get(name).value);
 			bodyLines.push(`${bodyIndent}const ${name} = ${value};`);
 		}
-		// Side-effecting expression statements (everything except the last).
-		for (let i = 0; i < stmts.length - 1; i++) {
+		// Detect a trailing if/else case expression: a run of implication
+		// statements `P₁ ⇒ A₁, P₂ ⇒ A₂, …, ⊤ ⇒ Aₑ` ending the block is
+		// compiled to the nested ternary `P₁ ? A₁ : P₂ ? A₂ : … : Aₑ`.
+		let caseChain = null;
+		const last = stmts[stmts.length - 1];
+		if (last.type === "ExprStmt" && last.expr.type === "BinaryOp" && last.expr.op === "⇒") {
+			const trailing = [];
+			let i = stmts.length - 1;
+			while (i >= 0 && stmts[i].type === "ExprStmt" && stmts[i].expr.type === "BinaryOp" && stmts[i].expr.op === "⇒") {
+				trailing.unshift(stmts[i]);
+				i--;
+			}
+			const tailExpr = trailing[trailing.length - 1].expr;
+			const hasElse = tailExpr.left.type === "Literal" && tailExpr.left.value === true;
+			if (trailing.length >= 2 && hasElse) {
+				caseChain = trailing;
+			}
+		}
+		// Side-effecting expression statements (everything before the last
+		// statement, or before the trailing case-chain).
+		const emitEnd = caseChain ? stmts.length - caseChain.length : stmts.length - 1;
+		for (let i = 0; i < emitEnd; i++) {
 			const s = stmts[i];
 			if (s.type === "ExprStmt") {
 				bodyLines.push(`${bodyIndent}${this.generateExpression(s.expr)};`);
 			}
 		}
-		// Implicit return: the value of the last statement.
-		const last = stmts[stmts.length - 1];
-		const returnStr = last.type === "Definition" ? last.name : this.generateExpression(last.expr);
+		// Implicit return: the value of the last statement (or the trailing
+		// case-chain compiled to a nested ternary).
+		let returnStr;
+		if (caseChain) {
+			// Start from the else value (right-hand side of the final `⊤ ⇒ Aₑ`)
+			// and wrap each preceding implication around it.
+			let chain = this.generateExpression(caseChain[caseChain.length - 1].expr.right);
+			for (let j = caseChain.length - 2; j >= 0; j--) {
+				const e = caseChain[j].expr;
+				chain = `(${this.generateExpression(e.left)} ? ${this.generateExpression(e.right)} : ${chain})`;
+			}
+			returnStr = chain;
+		} else {
+			returnStr = last.type === "Definition" ? last.name : this.generateExpression(last.expr);
+		}
 		bodyLines.push(`${bodyIndent}return ${returnStr};`);
 		this.currentLocals = prevLocals;
 		this.blockDepth = prevDepth;
@@ -1437,6 +1519,11 @@ export class Generator {
 			const left = this.generateExpression(expr.left);
 			const right = this.generateExpression(expr.right);
 			if (expr.op === "⇒") {
+				// ⊤ ⇒ A is "always true, so A" — used as the else branch in
+				// if/else case expressions.
+				if (expr.left.type === "Literal" && expr.left.value === true) {
+					return right;
+				}
 				return `(!${left} || ${right})`;
 			}
 			if (expr.op === "⇔") {
@@ -1545,6 +1632,17 @@ export class Generator {
 
 		if (expr.type === "Block") {
 			return this.generateBlockExpression(expr, this.currentLocals);
+		}
+
+		if (expr.type === "Iverson") {
+			// ⟦P⟧ → 1 when P is true, 0 otherwise.
+			return `(${this.generateExpression(expr.expr)} ? 1 : 0)`;
+		}
+
+		if (expr.type === "Minimize") {
+			// μ α (P(α)) → the smallest α ≥ 0 with P(α) true.
+			const body = this.generateExpression(expr.body);
+			return `(() => { let ${expr.var} = 0; while (!(${body})) ${expr.var}++; return ${expr.var}; })()`;
 		}
 
 		if (expr.type === "Integral") {
@@ -1781,6 +1879,18 @@ export class Generator {
 			// A nested block is self-contained: its own definitions shadow enclosing
 			// locals, and its implicit arguments are computed when it is generated.
 			// Nothing is contributed to the enclosing scope here.
+		} else if (expr.type === "Iverson") {
+			this.collectImplicitVars(expr.expr, enclosingLocals);
+		} else if (expr.type === "Minimize") {
+			// The bound variable is local to the while loop; other free Greek
+			// letters in the body are captured from the enclosing scope.
+			const tempGen = new Generator({ body: [] });
+			tempGen.collectImplicitVars(expr.body, enclosingLocals);
+			tempGen.usedImplicitVars.forEach((v) => {
+				if (v !== expr.var) {
+					this.usedImplicitVars.add(v);
+				}
+			});
 		} else if (expr.type === "Integral") {
 			// Bounds are evaluated in the outer scope.
 			if (expr.lower) this.collectImplicitVars(expr.lower, enclosingLocals);
