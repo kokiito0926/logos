@@ -49,7 +49,7 @@ test(
     δ ≔ α.y * α.y
     
     √(γ + δ)`,
-  /const magnitude = α => Math\.sqrt/
+  /const magnitude = \u03b1 => Math\.sqrt\(\(\(\u03b1\.x \* \u03b1\.x\) \+ \(\u03b1\.y \* \u03b1\.y\)\)\);/
 );
 
 // Test 4: Three implicit arguments

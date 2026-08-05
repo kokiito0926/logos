@@ -21,6 +21,217 @@ function isSubscriptChar(ch) {
 	return SUBSCRIPT_MAP[ch] !== undefined || /[₀-₉]/.test(ch);
 }
 
+/**
+ * Deep-copy an AST node (and its children) so an expression can be safely
+ * reused in multiple places without aliasing.
+ */
+function cloneExpr(expr) {
+	if (expr === null || typeof expr !== "object") return expr;
+	if (Array.isArray(expr)) return expr.map(cloneExpr);
+	const clone = {};
+	for (const key of Object.keys(expr)) {
+		clone[key] = cloneExpr(expr[key]);
+	}
+	return clone;
+}
+
+/**
+ * Substitute every free occurrence of the variable `name` inside `expr` with a
+ * clone of `replacement`. Returns a new tree (the original `expr` is returned
+ * unchanged when nothing is replaced).
+ *
+ * Scoping: does NOT descend into an ArrowFunction body when `name` is one of
+ * its params, nor into a Quantifier body when `name` is its bound var — the
+ * name is shadowed there.
+ */
+function substituteVars(expr, name, replacement) {
+	if (expr.type === "Variable") {
+		return expr.name === name ? cloneExpr(replacement) : expr;
+	}
+
+	if (expr.type === "ArrowFunction") {
+		if (expr.params.includes(name)) return expr;
+		const body = substituteVars(expr.body, name, replacement);
+		if (body === expr.body) return expr;
+		const cloned = cloneExpr(expr);
+		cloned.body = body;
+		return cloned;
+	}
+
+	if (expr.type === "Quantifier") {
+		if (expr.var === name) return expr;
+		const collection = substituteVars(expr.collection, name, replacement);
+		const body = substituteVars(expr.body, name, replacement);
+		if (collection === expr.collection && body === expr.body) return expr;
+		const cloned = cloneExpr(expr);
+		cloned.collection = collection;
+		cloned.body = body;
+		return cloned;
+	}
+
+	if (expr.type === "UnaryOp") {
+		const argument = substituteVars(expr.argument, name, replacement);
+		if (argument === expr.argument) return expr;
+		const cloned = cloneExpr(expr);
+		cloned.argument = argument;
+		return cloned;
+	}
+
+	if (expr.type === "BinaryOp") {
+		const left = substituteVars(expr.left, name, replacement);
+		const right = substituteVars(expr.right, name, replacement);
+		if (left === expr.left && right === expr.right) return expr;
+		const cloned = cloneExpr(expr);
+		cloned.left = left;
+		cloned.right = right;
+		return cloned;
+	}
+
+	if (expr.type === "ChainComparison") {
+		let changed = false;
+		const comparisons = expr.comparisons.map((c) => {
+			const left = substituteVars(c.left, name, replacement);
+			const right = substituteVars(c.right, name, replacement);
+			if (left !== c.left || right !== c.right) changed = true;
+			return { left, op: c.op, right };
+		});
+		if (!changed) return expr;
+		const cloned = cloneExpr(expr);
+		cloned.comparisons = comparisons;
+		return cloned;
+	}
+
+	if (expr.type === "Range") {
+		const start = substituteVars(expr.start, name, replacement);
+		const end = substituteVars(expr.end, name, replacement);
+		if (start === expr.start && end === expr.end) return expr;
+		const cloned = cloneExpr(expr);
+		cloned.start = start;
+		cloned.end = end;
+		return cloned;
+	}
+
+	if (expr.type === "MemberAccess") {
+		const object = substituteVars(expr.object, name, replacement);
+		if (object === expr.object) return expr;
+		const cloned = cloneExpr(expr);
+		cloned.object = object;
+		return cloned;
+	}
+
+	if (expr.type === "IndexAccess") {
+		const object = substituteVars(expr.object, name, replacement);
+		const index = substituteVars(expr.index, name, replacement);
+		if (object === expr.object && index === expr.index) return expr;
+		const cloned = cloneExpr(expr);
+		cloned.object = object;
+		cloned.index = index;
+		return cloned;
+	}
+
+	if (expr.type === "FunctionCall") {
+		const callee = substituteVars(expr.callee, name, replacement);
+		let argsChanged = false;
+		const args = expr.args.map((arg) => {
+			const next = substituteVars(arg, name, replacement);
+			if (next !== arg) argsChanged = true;
+			return next;
+		});
+		if (callee === expr.callee && !argsChanged) return expr;
+		const cloned = cloneExpr(expr);
+		cloned.callee = callee;
+		cloned.args = args;
+		return cloned;
+	}
+
+	if (expr.type === "Pipeline") {
+		const input = substituteVars(expr.input, name, replacement);
+		const func = substituteVars(expr.func, name, replacement);
+		if (input === expr.input && func === expr.func) return expr;
+		const cloned = cloneExpr(expr);
+		cloned.input = input;
+		cloned.func = func;
+		return cloned;
+	}
+
+	// Literal, Constant — leaves
+	return expr;
+}
+
+/**
+ * Collect the names from `innerNames` that occur as free variables in `expr`
+ * (respecting shadowing by arrow params and quantifier bound vars).
+ */
+function collectInnerRefs(expr, innerNames) {
+	const refs = new Set();
+
+	function walk(node, bound) {
+		if (node.type === "Variable") {
+			if (innerNames.has(node.name) && !bound.has(node.name)) {
+				refs.add(node.name);
+			}
+			return;
+		}
+		if (node.type === "ArrowFunction") {
+			const nextBound = new Set(bound);
+			node.params.forEach((p) => nextBound.add(p));
+			walk(node.body, nextBound);
+			return;
+		}
+		if (node.type === "Quantifier") {
+			const nextBound = new Set(bound);
+			nextBound.add(node.var);
+			walk(node.collection, bound);
+			walk(node.body, nextBound);
+			return;
+		}
+		if (node.type === "UnaryOp") {
+			walk(node.argument, bound);
+			return;
+		}
+		if (node.type === "BinaryOp") {
+			walk(node.left, bound);
+			walk(node.right, bound);
+			return;
+		}
+		if (node.type === "ChainComparison") {
+			node.comparisons.forEach((c) => {
+				walk(c.left, bound);
+				walk(c.right, bound);
+			});
+			return;
+		}
+		if (node.type === "Range") {
+			walk(node.start, bound);
+			walk(node.end, bound);
+			return;
+		}
+		if (node.type === "MemberAccess") {
+			walk(node.object, bound);
+			return;
+		}
+		if (node.type === "IndexAccess") {
+			walk(node.object, bound);
+			walk(node.index, bound);
+			return;
+		}
+		if (node.type === "FunctionCall") {
+			walk(node.callee, bound);
+			node.args.forEach((arg) => walk(arg, bound));
+			return;
+		}
+		if (node.type === "Pipeline") {
+			walk(node.input, bound);
+			walk(node.func, bound);
+			return;
+		}
+		// Literal, Constant — leaves
+	}
+
+	walk(expr, new Set());
+	return refs;
+}
+
 export class Lexer {
 	constructor(input) {
 		this.input = input;
@@ -725,11 +936,48 @@ export class Generator {
 				const innerNames = new Set(stmt.value.body.map((d) => d.name));
 				innerNames.forEach((n) => this.usedImplicitVars.delete(n));
 				const implicitArgs = Array.from(this.usedImplicitVars).sort();
-				let finalExprStr = this.generateExpression(stmt.value.expr);
-				stmt.value.body.forEach((d) => {
-					const innerStr = this.generateExpression(d.value);
-					finalExprStr = finalExprStr.replace(new RegExp(`\\b${d.name}\\b`, 'g'), innerStr);
-				});
+
+				// Expand inner definitions at the AST level, in dependency order,
+				// so a definition can reference earlier inner definitions.
+				const expanded = {};
+				let remaining = stmt.value.body.slice();
+				while (remaining.length > 0) {
+					const deferred = [];
+					let madeProgress = false;
+					for (const d of remaining) {
+						// Substitute every inner name that already has an expanded
+						// value, repeatedly, until a fixpoint.
+						let node = cloneExpr(d.value);
+						let changed = true;
+						while (changed) {
+							changed = false;
+							for (const name of Object.keys(expanded)) {
+								const next = substituteVars(node, name, expanded[name]);
+								if (next !== node) {
+									node = next;
+									changed = true;
+								}
+							}
+						}
+						if (collectInnerRefs(node, innerNames).size === 0) {
+							expanded[d.name] = node;
+							madeProgress = true;
+						} else {
+							deferred.push(d);
+						}
+					}
+					if (!madeProgress) {
+						throw new Error(`Circular reference in block: ${deferred[0].name}`);
+					}
+					remaining = deferred;
+				}
+
+				// Substitute all inner names into the block's final expression.
+				let finalExpr = stmt.value.expr;
+				for (const d of stmt.value.body) {
+					finalExpr = substituteVars(finalExpr, d.name, expanded[d.name]);
+				}
+				const finalExprStr = this.generateExpression(finalExpr);
 				if (implicitArgs.length === 0) {
 					return `const ${stmt.name} = ${finalExprStr};`;
 				} else if (implicitArgs.length === 1) {
