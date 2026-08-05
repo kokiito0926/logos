@@ -206,6 +206,153 @@ test('μ minimalization with implicit argument β', () => {
   assert.equal(first_ge(100), 10);
 });
 
+// ---- μ block form: variable-update loops (μ α with ← statements) ----
+
+test('μ block form: accumulated sum via ← updates', () => {
+  const result = compile(
+    'total ≔ μ s\n' +
+    '    s ← s + α\n' +
+    '    α ← α + 1\n' +
+    '    α > 10'
+  );
+  assert.equal(
+    result,
+    'const total = (() => { let s = 0; let α = 0; while (!((α > 10))) { (s = (s + α)); (α = (α + 1)); } return s; })();'
+  );
+});
+
+test('μ block form: bound variable updated via ← returns its final value', () => {
+  const result = compile(
+    'n ≔ μ α\n' +
+    '    α ← α + 2\n' +
+    '    α ≥ 10'
+  );
+  assert.equal(
+    result,
+    'const n = (() => { let α = 0; while (!((α >= 10))) { (α = (α + 2)); } return α; })();'
+  );
+});
+
+test('μ block form: auto-increments the bound variable when not reassigned', () => {
+  const result = compile(
+    'c ≔ μ α\n' +
+    '    α² ≥ 100'
+  );
+  assert.equal(
+    result,
+    'const c = (() => { let α = 0; while (!(((α ** 2) >= 100))) { α++; } return α; })();'
+  );
+});
+
+test('μ block form: helper variable (not the bound variable)', () => {
+  const result = compile(
+    'h ≔ μ α\n' +
+    '    s ← s + 1\n' +
+    '    s ≥ 3'
+  );
+  assert.equal(
+    result,
+    'const h = (() => { let α = 0; let s = 0; while (!((s >= 3))) { (s = (s + 1)); α++; } return α; })();'
+  );
+});
+
+test('μ block form: runtime accumulated sum', () => {
+  const { total } = run(
+    'total ≔ μ s\n' +
+    '    s ← s + α\n' +
+    '    α ← α + 1\n' +
+    '    α > 10',
+    ['total']
+  )();
+  assert.equal(total, 55);
+});
+
+test('μ block form: implicit argument β captured from the loop body', () => {
+  const { m } = run(
+    'm ≔ μ α\n' +
+    '    α ← α + β\n' +
+    '    α ≥ 100',
+    ['m']
+  )();
+  assert.equal(m(20), 100);
+  assert.equal(m(10), 100);
+});
+
+test('μ block form: block-local definitions referenced by the loop', () => {
+  const { count } = run(
+    'count ≔\n' +
+    '    step ≔ 3\n' +
+    '    result ≔ μ α\n' +
+    '        α ← α + step\n' +
+    '        α ≥ ν\n' +
+    '    result',
+    ['count']
+  )();
+  assert.equal(count(10), 12);
+  assert.equal(count(7), 9);
+});
+
+test('μ block form: forward reference to a later block-local def', () => {
+  const { f } = run(
+    'f ≔\n' +
+    '    total ≔ μ α\n' +
+    '        α ← α + step\n' +
+    '        α ≥ 10\n' +
+    '    step ≔ 2\n' +
+    '    total',
+    ['f']
+  )();
+  assert.equal(f(), 10);
+});
+
+test('μ block form: condition-only block behaves like the simple form', () => {
+  const { sq } = run(
+    'sq ≔ μ α\n' +
+    '    α² ≥ 81',
+    ['sq']
+  )();
+  assert.equal(sq, 9);
+});
+
+test('μ block form: explicit update overrides auto-increment', () => {
+  const { n } = run(
+    'n ≔ μ α\n' +
+    '    α ← α + 3\n' +
+    '    α ≥ 10',
+    ['n']
+  )();
+  assert.equal(n, 12);
+});
+
+test('μ block form rejects a trailing reassignment as the condition', () => {
+  assert.throws(
+    () => compile(
+      'x ≔ μ α\n' +
+      '    α ← α + 1'
+    ),
+    /最後の文は再代入/
+  );
+});
+
+test('μ block form rejects non-expression statements', () => {
+  assert.throws(
+    () => compile(
+      'x ≔ μ α\n' +
+      '    z ≔ 1\n' +
+      '    α ≥ 5'
+    ),
+    /式文（再代入 ← と条件式）のみ/
+  );
+});
+
+test('μ simple form still compiles unchanged', () => {
+  const result = compile('n ≔ μ α (α² ≥ 100)');
+  assert.equal(
+    result,
+    'const n = (() => { let α = 0; while (!(((α ** 2) >= 100))) α++; return α; })();'
+  );
+});
+
 test('μ minimalization with a complex body', () => {
   const { m } = run('m ≔ μ α (α² + 3*α > 40)', ['m'])();
   // α² + 3α > 40 → α = 6 (36 + 18 = 54 > 40), α = 5 (25 + 15 = 40, not >)

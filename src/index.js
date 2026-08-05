@@ -100,7 +100,19 @@ function collectInnerRefs(expr, innerNames) {
 		if (node.type === "Minimize") {
 			const nextBound = new Set(bound);
 			nextBound.add(node.var);
-			walk(node.body, nextBound);
+			if (node.body.type === "Block") {
+				// Block form: `←` targets are loop-local; walk each statement.
+				for (const s of node.body.statements) {
+					if (s.expr.type === "BinaryOp" && s.expr.op === "=" && s.expr.left.type === "Variable") {
+						nextBound.add(s.expr.left.name);
+					}
+				}
+				for (const s of node.body.statements) {
+					walk(s.expr, nextBound);
+				}
+			} else {
+				walk(node.body, nextBound);
+			}
 			return;
 		}
 		if (node.type === "UnaryOp") {
@@ -534,8 +546,27 @@ export class Parser {
 	parseQuantifier() {
 		if (this.match("MU")) {
 			// μ α (P(α)) — minimalization: the smallest α ≥ 0 with P(α) true.
+			// Block form: μ α NEWLINE INDENT stmts DEDENT — a loop that runs `←`
+			// variable-update statements until the trailing condition holds.
 			this.advance();
 			const boundVar = this.expect("IDENT").value;
+			if (this.match("NEWLINE")) {
+				while (this.match("NEWLINE")) {
+					this.advance();
+				}
+				this.expect("INDENT");
+				const statements = this.parseBlockStatements();
+				for (const s of statements) {
+					if (s.type !== "ExprStmt") {
+						throw new Error("μ のブロックには式文（再代入 ← と条件式）のみ書けます");
+					}
+				}
+				const last = statements[statements.length - 1];
+				if (last.expr.type === "BinaryOp" && last.expr.op === "=") {
+					throw new Error("μ のブロックの最後の文は再代入(←)ではなく、ループの条件式にしてください");
+				}
+				return { type: "Minimize", var: boundVar, body: { type: "Block", statements } };
+			}
 			this.expect("LPAREN");
 			const body = this.parseExpression();
 			this.expect("RPAREN");
@@ -1640,6 +1671,27 @@ export class Generator {
 		}
 
 		if (expr.type === "Minimize") {
+			if (expr.body.type === "Block") {
+				// Block form: `μ α` with `←` variable-update statements and a
+				// final condition expression → a while loop that returns α.
+				const stmts = expr.body.statements;
+				const last = stmts[stmts.length - 1];
+				const condition = this.generateExpression(last.expr);
+				const targets = new Set();
+				for (const s of stmts.slice(0, -1)) {
+					if (s.expr.type === "BinaryOp" && s.expr.op === "=" && s.expr.left.type === "Variable") {
+						targets.add(s.expr.left.name);
+					}
+				}
+				const locals = new Set([expr.var, ...targets]);
+				const decls = [...locals].map((n) => `let ${n} = 0;`).join(" ");
+				const bodyLines = stmts.slice(0, -1).map((s) => `${this.generateExpression(s.expr)};`);
+				// Auto-increment the bound variable unless it is updated via `←`.
+				if (!targets.has(expr.var)) {
+					bodyLines.push(`${expr.var}++;`);
+				}
+				return `(() => { ${decls} while (!(${condition})) { ${bodyLines.join(" ")} } return ${expr.var}; })()`;
+			}
 			// μ α (P(α)) → the smallest α ≥ 0 with P(α) true.
 			const body = this.generateExpression(expr.body);
 			return `(() => { let ${expr.var} = 0; while (!(${body})) ${expr.var}++; return ${expr.var}; })()`;
@@ -1882,15 +1934,34 @@ export class Generator {
 		} else if (expr.type === "Iverson") {
 			this.collectImplicitVars(expr.expr, enclosingLocals);
 		} else if (expr.type === "Minimize") {
-			// The bound variable is local to the while loop; other free Greek
-			// letters in the body are captured from the enclosing scope.
+			// The bound variable (and, in the block form, every `←` target) is
+			// local to the loop; other free Greek letters in the body are
+			// captured from the enclosing scope.
 			const tempGen = new Generator({ body: [] });
-			tempGen.collectImplicitVars(expr.body, enclosingLocals);
-			tempGen.usedImplicitVars.forEach((v) => {
-				if (v !== expr.var) {
-					this.usedImplicitVars.add(v);
+			if (expr.body.type === "Block") {
+				const locals = new Set([expr.var]);
+				for (const s of expr.body.statements) {
+					if (s.expr.type === "BinaryOp" && s.expr.op === "=" && s.expr.left.type === "Variable") {
+						locals.add(s.expr.left.name);
+					}
 				}
-			});
+				const localSet = new Set([...enclosingLocals, ...locals]);
+				for (const s of expr.body.statements) {
+					tempGen.collectImplicitVars(s.expr, localSet);
+				}
+				tempGen.usedImplicitVars.forEach((v) => {
+					if (!locals.has(v)) {
+						this.usedImplicitVars.add(v);
+					}
+				});
+			} else {
+				tempGen.collectImplicitVars(expr.body, enclosingLocals);
+				tempGen.usedImplicitVars.forEach((v) => {
+					if (v !== expr.var) {
+						this.usedImplicitVars.add(v);
+					}
+				});
+			}
 		} else if (expr.type === "Integral") {
 			// Bounds are evaluated in the outer scope.
 			if (expr.lower) this.collectImplicitVars(expr.lower, enclosingLocals);

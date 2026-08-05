@@ -10,3 +10,4 @@ const abs = α => {
 };
 const adult = ((age >= 18) ? 1 : 0);
 const n = (() => { let α = 0; while (!(((α ** 2) >= 100))) α++; return α; })();
+const total = (() => { let s = 0; let α = 0; while (!((α > 10))) { (s = (s + α)); (α = (α + 1)); } return s; })();
