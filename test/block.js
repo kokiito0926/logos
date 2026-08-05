@@ -15,7 +15,11 @@ test('Greek-letter inner names are substituted (original bug)', () => {
   );
   assert.equal(
     result,
-    'const magnitude = \u03b1 => Math.sqrt(((\u03b1.x * \u03b1.x) + (\u03b1.y * \u03b1.y)));'
+    'const magnitude = \u03b1 => {\n' +
+    '    const \u03b3 = (\u03b1.x * \u03b1.x);\n' +
+    '    const \u03b4 = (\u03b1.y * \u03b1.y);\n' +
+    '    return Math.sqrt((\u03b3 + \u03b4));\n' +
+    '};'
   );
 });
 
@@ -26,7 +30,14 @@ test('Dependency chain between inner definitions', () => {
     '    k \u2254 h * 2\n\n' +
     '    k'
   );
-  assert.equal(result, 'const f = \u03b1 => ((\u03b1 + 1) * 2);');
+  assert.equal(
+    result,
+    'const f = \u03b1 => {\n' +
+    '    const h = (\u03b1 + 1);\n' +
+    '    const k = (h * 2);\n' +
+    '    return k;\n' +
+    '};'
+  );
 });
 
 test('Dependency chain with later definition referenced first', () => {
@@ -36,7 +47,14 @@ test('Dependency chain with later definition referenced first', () => {
     '    h \u2254 \u03b1 + 1\n\n' +
     '    k'
   );
-  assert.equal(result, 'const f = \u03b1 => ((\u03b1 + 1) * 2);');
+  assert.equal(
+    result,
+    'const f = \u03b1 => {\n' +
+    '    const h = (\u03b1 + 1);\n' +
+    '    const k = (h * 2);\n' +
+    '    return k;\n' +
+    '};'
+  );
 });
 
 test('Mixed ASCII and Greek inner names', () => {
@@ -46,7 +64,14 @@ test('Mixed ASCII and Greek inner names', () => {
     '    k \u2254 \u03b3 + 1\n\n' +
     '    \u221a(k)'
   );
-  assert.equal(result, 'const f = \u03b1 => Math.sqrt(((\u03b1.x * \u03b1.x) + 1));');
+  assert.equal(
+    result,
+    'const f = \u03b1 => {\n' +
+    '    const \u03b3 = (\u03b1.x * \u03b1.x);\n' +
+    '    const k = (\u03b3 + 1);\n' +
+    '    return Math.sqrt(k);\n' +
+    '};'
+  );
 });
 
 test('Cyclic reference between inner definitions throws', () => {
@@ -81,6 +106,11 @@ test('Single-line definition still works (regression guard)', () => {
   assert.equal(result, 'const square = \u03b1 => (\u03b1 ** 2);');
 });
 
+test('Single-expression block flattens to inline arrow', () => {
+  const result = compile('square \u2254\n    \u03b1\u00b2');
+  assert.equal(result, 'const square = \u03b1 => (\u03b1 ** 2);');
+});
+
 test('Inner name shadowed by an arrow parameter is not substituted', () => {
   const result = compile(
     'f \u2254\n' +
@@ -90,6 +120,132 @@ test('Inner name shadowed by an arrow parameter is not substituted', () => {
   );
   assert.equal(
     result,
-    'const f = \u03b1 => \u03b3 => (\u03b3 + 1)((\u03b1.x * \u03b1.x));'
+    'const f = \u03b1 => {\n' +
+    '    const \u03b3 = (\u03b1.x * \u03b1.x);\n' +
+    '    const g = \u03b3 => (\u03b3 + 1);\n' +
+    '    return g(\u03b3);\n' +
+    '};'
   );
+});
+
+test('Nested blocks produce properly indented scopes', () => {
+  const result = compile(
+    'f \u2254\n' +
+    '    g \u2254\n' +
+    '        \u03b4 \u2254 \u03b1 + 1\n' +
+    '        \u03b4\n' +
+    '    g'
+  );
+  assert.equal(
+    result,
+    'const f = () => {\n' +
+    '    const g = \u03b1 => {\n' +
+    '        const \u03b4 = (\u03b1 + 1);\n' +
+    '        return \u03b4;\n' +
+    '    };\n' +
+    '    return g;\n' +
+    '};'
+  );
+});
+
+test('Multi-line parenthesized expression inside a block', () => {
+  const result = compile(
+    'distance \u2254\n' +
+    '    \u03b3 \u2254 \u03b1.x - \u03b2.x\n' +
+    '    \u03b4 \u2254 \u03b1.y - \u03b2.y\n' +
+    '    \u221a(\n' +
+    '        \u03b3\u00b2 +\n' +
+    '        \u03b4\u00b2\n' +
+    '    )'
+  );
+  assert.equal(
+    result,
+    'const distance = (\u03b1, \u03b2) => {\n' +
+    '    const \u03b3 = (\u03b1.x - \u03b2.x);\n' +
+    '    const \u03b4 = (\u03b1.y - \u03b2.y);\n' +
+    '    return Math.sqrt(((\u03b3 ** 2) + (\u03b4 ** 2)));\n' +
+    '};'
+  );
+});
+
+test('Side-effect function-call statement before the result', () => {
+  const result = compile(
+    'f \u2254\n' +
+    '    g \u2254 \u03b1 + 1\n' +
+    '    print(g)\n' +
+    '    g'
+  );
+  assert.equal(
+    result,
+    'const f = \u03b1 => {\n' +
+    '    const g = (\u03b1 + 1);\n' +
+    '    print(g);\n' +
+    '    return g;\n' +
+    '};'
+  );
+});
+
+test('Reassignment (re-assignment arrow) as an expression statement', () => {
+  const result = compile(
+    'f \u2254\n' +
+    '    acc \u2254 0\n' +
+    '    acc \u2190 acc + 1\n' +
+    '    acc'
+  );
+  assert.equal(
+    result,
+    'const f = () => {\n' +
+    '    const acc = 0;\n' +
+    '    (acc = (acc + 1));\n' +
+    '    return acc;\n' +
+    '};'
+  );
+});
+
+test('Blank lines inside a block are ignored', () => {
+  const result = compile(
+    'f \u2254\n' +
+    '    \u03b3 \u2254 \u03b1 + 1\n' +
+    '\n' +
+    '\n' +
+    '    \u03b3'
+  );
+  assert.equal(
+    result,
+    'const f = \u03b1 => {\n' +
+    '    const \u03b3 = (\u03b1 + 1);\n' +
+    '    return \u03b3;\n' +
+    '};'
+  );
+});
+
+test('Quantifier with indented body inside a block', () => {
+  const result = compile(
+    'f \u2254\n' +
+    '    s \u2254 \u2211 \u03b1 \u2208 xs :\n' +
+    '        \u03b1 + 1\n' +
+    '    s'
+  );
+  assert.equal(
+    result,
+    'const f = () => {\n' +
+    '    const s = [...xs].reduce((acc, \u03b1) => acc + (\u03b1 + 1), 0);\n' +
+    '    return s;\n' +
+    '};'
+  );
+});
+
+test('Unindented block body throws (indentation enforced)', () => {
+  assert.throws(() => compile('f \u2254\n\u03b3 \u2254 1'), /Expected INDENT after block definition/);
+});
+
+test('Inconsistent indentation inside a block throws', () => {
+  assert.throws(
+    () => compile('f \u2254\n    \u03b3 \u2254 \u03b1 + 1\n  \u03b3'),
+    /Inconsistent indentation/
+  );
+});
+
+test('Empty block throws', () => {
+  assert.throws(() => compile('f \u2254\n    '), /Expected INDENT after block definition|Empty block/);
 });

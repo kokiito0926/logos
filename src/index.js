@@ -21,142 +21,6 @@ function isSubscriptChar(ch) {
 	return SUBSCRIPT_MAP[ch] !== undefined || /[₀-₉]/.test(ch);
 }
 
-/**
- * Deep-copy an AST node (and its children) so an expression can be safely
- * reused in multiple places without aliasing.
- */
-function cloneExpr(expr) {
-	if (expr === null || typeof expr !== "object") return expr;
-	if (Array.isArray(expr)) return expr.map(cloneExpr);
-	const clone = {};
-	for (const key of Object.keys(expr)) {
-		clone[key] = cloneExpr(expr[key]);
-	}
-	return clone;
-}
-
-/**
- * Substitute every free occurrence of the variable `name` inside `expr` with a
- * clone of `replacement`. Returns a new tree (the original `expr` is returned
- * unchanged when nothing is replaced).
- *
- * Scoping: does NOT descend into an ArrowFunction body when `name` is one of
- * its params, nor into a Quantifier body when `name` is its bound var — the
- * name is shadowed there.
- */
-function substituteVars(expr, name, replacement) {
-	if (expr.type === "Variable") {
-		return expr.name === name ? cloneExpr(replacement) : expr;
-	}
-
-	if (expr.type === "ArrowFunction") {
-		if (expr.params.includes(name)) return expr;
-		const body = substituteVars(expr.body, name, replacement);
-		if (body === expr.body) return expr;
-		const cloned = cloneExpr(expr);
-		cloned.body = body;
-		return cloned;
-	}
-
-	if (expr.type === "Quantifier") {
-		if (expr.var === name) return expr;
-		const collection = substituteVars(expr.collection, name, replacement);
-		const body = substituteVars(expr.body, name, replacement);
-		if (collection === expr.collection && body === expr.body) return expr;
-		const cloned = cloneExpr(expr);
-		cloned.collection = collection;
-		cloned.body = body;
-		return cloned;
-	}
-
-	if (expr.type === "UnaryOp") {
-		const argument = substituteVars(expr.argument, name, replacement);
-		if (argument === expr.argument) return expr;
-		const cloned = cloneExpr(expr);
-		cloned.argument = argument;
-		return cloned;
-	}
-
-	if (expr.type === "BinaryOp") {
-		const left = substituteVars(expr.left, name, replacement);
-		const right = substituteVars(expr.right, name, replacement);
-		if (left === expr.left && right === expr.right) return expr;
-		const cloned = cloneExpr(expr);
-		cloned.left = left;
-		cloned.right = right;
-		return cloned;
-	}
-
-	if (expr.type === "ChainComparison") {
-		let changed = false;
-		const comparisons = expr.comparisons.map((c) => {
-			const left = substituteVars(c.left, name, replacement);
-			const right = substituteVars(c.right, name, replacement);
-			if (left !== c.left || right !== c.right) changed = true;
-			return { left, op: c.op, right };
-		});
-		if (!changed) return expr;
-		const cloned = cloneExpr(expr);
-		cloned.comparisons = comparisons;
-		return cloned;
-	}
-
-	if (expr.type === "Range") {
-		const start = substituteVars(expr.start, name, replacement);
-		const end = substituteVars(expr.end, name, replacement);
-		if (start === expr.start && end === expr.end) return expr;
-		const cloned = cloneExpr(expr);
-		cloned.start = start;
-		cloned.end = end;
-		return cloned;
-	}
-
-	if (expr.type === "MemberAccess") {
-		const object = substituteVars(expr.object, name, replacement);
-		if (object === expr.object) return expr;
-		const cloned = cloneExpr(expr);
-		cloned.object = object;
-		return cloned;
-	}
-
-	if (expr.type === "IndexAccess") {
-		const object = substituteVars(expr.object, name, replacement);
-		const index = substituteVars(expr.index, name, replacement);
-		if (object === expr.object && index === expr.index) return expr;
-		const cloned = cloneExpr(expr);
-		cloned.object = object;
-		cloned.index = index;
-		return cloned;
-	}
-
-	if (expr.type === "FunctionCall") {
-		const callee = substituteVars(expr.callee, name, replacement);
-		let argsChanged = false;
-		const args = expr.args.map((arg) => {
-			const next = substituteVars(arg, name, replacement);
-			if (next !== arg) argsChanged = true;
-			return next;
-		});
-		if (callee === expr.callee && !argsChanged) return expr;
-		const cloned = cloneExpr(expr);
-		cloned.callee = callee;
-		cloned.args = args;
-		return cloned;
-	}
-
-	if (expr.type === "Pipeline") {
-		const input = substituteVars(expr.input, name, replacement);
-		const func = substituteVars(expr.func, name, replacement);
-		if (input === expr.input && func === expr.func) return expr;
-		const cloned = cloneExpr(expr);
-		cloned.input = input;
-		cloned.func = func;
-		return cloned;
-	}
-
-	// Literal, Constant — leaves
-	return expr;
-}
 
 /**
  * Collect the names from `innerNames` that occur as free variables in `expr`
@@ -225,6 +89,18 @@ function collectInnerRefs(expr, innerNames) {
 			walk(node.func, bound);
 			return;
 		}
+		if (node.type === "Block") {
+			// The block's own definitions shadow outer names inside the block.
+			const nextBound = new Set(bound);
+			node.statements.forEach((s) => {
+				if (s.type === "Definition") nextBound.add(s.name);
+			});
+			node.statements.forEach((s) => {
+				if (s.type === "Definition") walk(s.value, nextBound);
+				else walk(s.expr, nextBound);
+			});
+			return;
+		}
 		// Literal, Constant — leaves
 	}
 
@@ -236,6 +112,9 @@ export class Lexer {
 	constructor(input) {
 		this.input = input;
 		this.pos = 0;
+		// Depth of open parentheses/brackets. While non-zero, newlines and
+		// indentation are insignificant (multi-line parenthesized expressions).
+		this.parenDepth = 0;
 	}
 
 	peek(offset = 0) {
@@ -255,18 +134,64 @@ export class Lexer {
 
 	tokenize() {
 		const tokens = [];
+		// Indentation stack of open block levels (base level is 0).
+		const indentStack = [0];
+		// True while we have not yet read any token on the current line.
+		let lineStart = true;
+
+		const emitNewline = () => {
+			// Newlines inside parentheses/brackets are insignificant.
+			if (this.parenDepth === 0) {
+				tokens.push({ type: "NEWLINE", value: "\n" });
+			}
+		};
 
 		while (this.pos < this.input.length) {
+			// At the start of a line, measure indentation and emit INDENT/DEDENT.
+			if (lineStart) {
+				lineStart = false;
+				// Inside parentheses/brackets, line structure is insignificant.
+				if (this.parenDepth > 0) {
+					this.skipWhitespace();
+					continue;
+				}
+				let indent = 0;
+				while (this.pos < this.input.length && /[ \t]/.test(this.peek())) {
+					indent += this.peek() === "\t" ? 4 : 1;
+					this.advance();
+				}
+				if (this.pos >= this.input.length) break;
+				// Blank line: does not affect indentation, but emits a NEWLINE below.
+				if (this.peek() === "\r" || this.peek() === "\n") continue;
+
+				const current = indentStack[indentStack.length - 1];
+				if (indent > current) {
+					indentStack.push(indent);
+					tokens.push({ type: "INDENT", value: indent });
+				} else if (indent < current) {
+					while (indentStack.length > 1 && indentStack[indentStack.length - 1] > indent) {
+						indentStack.pop();
+						tokens.push({ type: "DEDENT", value: null });
+					}
+					if (indentStack[indentStack.length - 1] !== indent) {
+						throw new Error(`Inconsistent indentation: expected ${indentStack[indentStack.length - 1]}, got ${indent}`);
+					}
+				}
+				continue;
+			}
+
 			// Treat CR, LF, or CRLF as significant newline tokens so the parser can detect multi-line blocks
 			if (this.peek() === '\r') {
 				this.advance();
 				if (this.peek() === '\n') this.advance();
-				tokens.push({ type: "NEWLINE", value: "\n" });
+				emitNewline();
+				lineStart = true;
 				continue;
 			}
 			if (this.peek() === '\n') {
 				this.advance();
-				tokens.push({ type: "NEWLINE", value: "\n" });
+				emitNewline();
+				lineStart = true;
 				continue;
 			}
 			this.skipWhitespace();
@@ -275,12 +200,14 @@ export class Lexer {
 			if (this.peek() === '\r') {
 				this.advance();
 				if (this.peek() === '\n') this.advance();
-				tokens.push({ type: "NEWLINE", value: "\n" });
+				emitNewline();
+				lineStart = true;
 				continue;
 			}
 			if (this.peek() === '\n') {
 				this.advance();
-				tokens.push({ type: "NEWLINE", value: "\n" });
+				emitNewline();
+				lineStart = true;
 				continue;
 			}
 			const char = this.peek();
@@ -416,6 +343,10 @@ export class Lexer {
 				"‥": "RANGE",
 			};
 
+			// Track bracket depth so newlines inside parens/brackets are insignificant.
+			if (char === "(" || char === "[") this.parenDepth++;
+			if (char === ")" || char === "]") this.parenDepth = Math.max(0, this.parenDepth - 1);
+
 			if (symbolMap[char]) {
 				tokens.push({ type: symbolMap[char], value: this.advance() });
 				continue;
@@ -424,6 +355,11 @@ export class Lexer {
 			throw new Error(`Unexpected character: ${char} at position ${this.pos}`);
 		}
 
+		// Close any open indentation levels at end of input.
+		while (indentStack.length > 1) {
+			indentStack.pop();
+			tokens.push({ type: "DEDENT", value: null });
+		}
 		tokens.push({ type: "EOF", value: null });
 		return tokens;
 	}
@@ -469,43 +405,50 @@ export class Parser {
 		return { type: "Program", body: statements };
 	}
 
-	parseStatement() {
+	parseStatement(inBlock = false) {
 		const token = this.peek();
-		if (token.type === "IDENT") {
-			const name = token.value;
-			this.advance();
-			if (this.match("ASSIGN")) {
-				this.advance(); // consume ≔
-				// Support block-style definitions:
-				if (this.match("NEWLINE")) {
+		if (token.type === "IDENT" && this.peek(1) && this.peek(1).type === "ASSIGN") {
+			const name = this.advance().value;
+			this.advance(); // consume ≔
+			// Support block-style definitions:
+			if (this.match("NEWLINE")) {
+				while (this.match("NEWLINE")) {
 					this.advance();
-					const innerDefs = [];
-					while (this.match("IDENT") && this.peek(1) && this.peek(1).type === "ASSIGN") {
-						const innerName = this.advance().value;
-						this.advance(); // consume ASSIGN
-						const innerValue = this.parseExpression();
-						innerDefs.push({ type: "Definition", name: innerName, value: innerValue });
-						if (this.match("NEWLINE")) {
-							this.advance();
-							if (this.match("NEWLINE")) {
-								this.advance();
-								break;
-							} else {
-								continue;
-							}
-						} else {
-							break;
-						}
-					}
-					const finalExpr = this.parseExpression();
-					return { type: "Definition", name, value: { type: "Block", body: innerDefs, expr: finalExpr } };
-				} else {
-					const value = this.parseExpression();
-					return { type: "Definition", name, value };
 				}
+				if (!this.match("INDENT")) {
+					throw new Error(`Expected INDENT after block definition, got ${this.peek().type}`);
+				}
+				this.advance();
+				const statements = this.parseBlockStatements();
+				return { type: "Definition", name, value: { type: "Block", statements } };
+			} else {
+				const value = this.parseExpression();
+				return { type: "Definition", name, value };
 			}
 		}
+		if (inBlock) {
+			// Expression statement inside a block (function call, reassignment, return value...)
+			const expr = this.parseExpression();
+			return { type: "ExprStmt", expr };
+		}
 		throw new Error(`Unexpected token: ${token.type}`);
+	}
+
+	parseBlockStatements() {
+		const statements = [];
+		while (!this.match("DEDENT") && !this.match("EOF")) {
+			while (this.match("NEWLINE")) {
+				this.advance();
+			}
+			if (this.match("DEDENT") || this.match("EOF")) break;
+			const stmt = this.parseStatement(true);
+			statements.push(stmt);
+		}
+		this.expect("DEDENT");
+		if (statements.length === 0) {
+			throw new Error("Empty block");
+		}
+		return statements;
 	}
 
 	parseExpression() {
@@ -519,11 +462,21 @@ export class Parser {
 			this.expect("IN");
 			const collection = this.parseExpression();
 			this.expect("COLON");
-			// Body may start on the next line
+			// Body may start on the next line (optionally indented)
 			while (this.match("NEWLINE")) {
 				this.advance();
 			}
-			const body = this.parseExpression();
+			let body;
+			if (this.match("INDENT")) {
+				this.advance();
+				body = this.parseExpression();
+				while (this.match("NEWLINE")) {
+					this.advance();
+				}
+				this.expect("DEDENT");
+			} else {
+				body = this.parseExpression();
+			}
 			const quantifier =
 				quant.type === "FORALL" ? "∀" :
 				quant.type === "EXISTS" ? "∃" :
@@ -910,10 +863,44 @@ export class Parser {
 	}
 }
 
+/**
+ * Order a list of block definitions so each definition appears after every
+ * definition it references (dependencies first), allowing forward references.
+ * Throws on circular references.
+ */
+function topoSortDefs(defs) {
+	const byName = new Map(defs.map((d) => [d.name, d]));
+	const innerNames = new Set(defs.map((d) => d.name));
+	const state = new Map(); // name -> 0 (visiting) | 1 (done)
+	const order = [];
+
+	function visit(name) {
+		if (state.get(name) === 1) return;
+		if (state.get(name) === 0) throw new Error(`Circular reference in block: ${name}`);
+		state.set(name, 0);
+		const def = byName.get(name);
+		if (def) {
+			for (const dep of collectInnerRefs(def.value, innerNames)) {
+				visit(dep);
+			}
+		}
+		state.set(name, 1);
+		order.push(name);
+	}
+
+	for (const d of defs) visit(d.name);
+	return order;
+}
+
 export class Generator {
 	constructor(ast) {
 		this.ast = ast;
 		this.usedImplicitVars = new Set();
+		// Names in scope around the block currently being generated (used so a
+		// nested block does not treat an enclosing block's locals as its own
+		// implicit arguments).
+		this.currentLocals = new Set();
+		this.blockDepth = 0;
 	}
 
 	generate() {
@@ -931,77 +918,100 @@ export class Generator {
 			}
 
 			if (stmt.value && stmt.value.type === "Block") {
-				stmt.value.body.forEach((d) => this.collectImplicitVars(d.value));
-				this.collectImplicitVars(stmt.value.expr);
-				const innerNames = new Set(stmt.value.body.map((d) => d.name));
-				innerNames.forEach((n) => this.usedImplicitVars.delete(n));
-				const implicitArgs = Array.from(this.usedImplicitVars).sort();
-
-				// Expand inner definitions at the AST level, in dependency order,
-				// so a definition can reference earlier inner definitions.
-				const expanded = {};
-				let remaining = stmt.value.body.slice();
-				while (remaining.length > 0) {
-					const deferred = [];
-					let madeProgress = false;
-					for (const d of remaining) {
-						// Substitute every inner name that already has an expanded
-						// value, repeatedly, until a fixpoint.
-						let node = cloneExpr(d.value);
-						let changed = true;
-						while (changed) {
-							changed = false;
-							for (const name of Object.keys(expanded)) {
-								const next = substituteVars(node, name, expanded[name]);
-								if (next !== node) {
-									node = next;
-									changed = true;
-								}
-							}
-						}
-						if (collectInnerRefs(node, innerNames).size === 0) {
-							expanded[d.name] = node;
-							madeProgress = true;
-						} else {
-							deferred.push(d);
-						}
-					}
-					if (!madeProgress) {
-						throw new Error(`Circular reference in block: ${deferred[0].name}`);
-					}
-					remaining = deferred;
+				// A block whose body is a single expression is equivalent to a
+				// plain expression definition (implicit return).
+				if (stmt.value.statements.length === 1 && stmt.value.statements[0].type === "ExprStmt") {
+					return this.generateExpressionDefinition(stmt.name, stmt.value.statements[0].expr);
 				}
-
-				// Substitute all inner names into the block's final expression.
-				let finalExpr = stmt.value.expr;
-				for (const d of stmt.value.body) {
-					finalExpr = substituteVars(finalExpr, d.name, expanded[d.name]);
-				}
-				const finalExprStr = this.generateExpression(finalExpr);
-				if (implicitArgs.length === 0) {
-					return `const ${stmt.name} = ${finalExprStr};`;
-				} else if (implicitArgs.length === 1) {
-					return `const ${stmt.name} = ${implicitArgs[0]} => ${finalExprStr};`;
-				} else {
-					return `const ${stmt.name} = (${implicitArgs.join(", ")}) => ${finalExprStr};`;
-				}
+				const arrow = this.generateBlockExpression(stmt.value, new Set());
+				return `const ${stmt.name} = ${arrow};`;
 			} else {
-				this.collectImplicitVars(stmt.value);
-				const implicitArgs = Array.from(this.usedImplicitVars).sort();
-				let expr = this.generateExpression(stmt.value);
-				if (stmt.value && stmt.value.type === 'BinaryOp' && stmt.value.op === '*' && stmt.value.left && stmt.value.left.type === 'Literal' && stmt.value.right && stmt.value.right.type === 'BinaryOp' && stmt.value.right.op === '**') {
-					expr = `(${expr})`;
-				}
-				if (implicitArgs.length === 0) {
-					return `const ${stmt.name} = ${expr};`;
-				} else if (implicitArgs.length === 1) {
-					return `const ${stmt.name} = ${implicitArgs[0]} => ${expr};`;
-				} else {
-					return `const ${stmt.name} = (${implicitArgs.join(", ")}) => ${expr};`;
-				}
+				return this.generateExpressionDefinition(stmt.name, stmt.value);
 			}
 		}
 		throw new Error(`Unknown statement type: ${stmt.type}`);
+	}
+
+	generateExpressionDefinition(name, value) {
+		this.collectImplicitVars(value);
+		const implicitArgs = Array.from(this.usedImplicitVars).sort();
+		let expr = this.generateExpression(value);
+		if (value && value.type === 'BinaryOp' && value.op === '*' && value.left && value.left.type === 'Literal' && value.right && value.right.type === 'BinaryOp' && value.right.op === '**') {
+			expr = `(${expr})`;
+		}
+		if (implicitArgs.length === 0) {
+			return `const ${name} = ${expr};`;
+		} else if (implicitArgs.length === 1) {
+			return `const ${name} = ${implicitArgs[0]} => ${expr};`;
+		} else {
+			return `const ${name} = (${implicitArgs.join(", ")}) => ${expr};`;
+		}
+	}
+
+	generateBlockExpression(block, enclosingLocals) {
+		const stmts = block.statements;
+
+		// A block whose body is a single expression is an implicit-return function.
+		if (stmts.length === 1 && stmts[0].type === "ExprStmt") {
+			this.usedImplicitVars = new Set();
+			this.collectImplicitVars(stmts[0].expr, enclosingLocals);
+			const implicitArgs = Array.from(this.usedImplicitVars).sort();
+			let expr = this.generateExpression(stmts[0].expr);
+			if (stmts[0].expr.type === 'BinaryOp' && stmts[0].expr.op === '*' && stmts[0].expr.left.type === 'Literal' && stmts[0].expr.right.type === 'BinaryOp' && stmts[0].expr.right.op === '**') {
+				expr = `(${expr})`;
+			}
+			const paramStr = implicitArgs.length === 0 ? "()" : implicitArgs.length === 1 ? implicitArgs[0] : `(${implicitArgs.join(", ")})`;
+			return `${paramStr} => ${expr}`;
+		}
+
+		const localNames = new Set(stmts.filter((s) => s.type === "Definition").map((s) => s.name));
+		const childLocals = new Set([...enclosingLocals, ...localNames]);
+
+		// Implicit arguments: free Greek-letter variables referenced by the block
+		// body, excluding the block's own local definitions.
+		this.usedImplicitVars = new Set();
+		for (const s of stmts) {
+			if (s.type === "Definition") {
+				this.collectImplicitVars(s.value, childLocals);
+			} else {
+				this.collectImplicitVars(s.expr, childLocals);
+			}
+		}
+		localNames.forEach((n) => this.usedImplicitVars.delete(n));
+		const implicitArgs = Array.from(this.usedImplicitVars).sort();
+
+		// Emit local definitions in dependency order so forward references work.
+		const defs = stmts.filter((s) => s.type === "Definition");
+		const defOrder = topoSortDefs(defs);
+		const defByName = new Map(defs.map((d) => [d.name, d]));
+
+		const prevLocals = this.currentLocals;
+		const prevDepth = this.blockDepth;
+		this.currentLocals = childLocals;
+		this.blockDepth = prevDepth + 1;
+		const bodyIndent = "    ".repeat(this.blockDepth);
+		const closeIndent = "    ".repeat(prevDepth);
+		const bodyLines = [];
+		for (const name of defOrder) {
+			const value = this.generateExpression(defByName.get(name).value);
+			bodyLines.push(`${bodyIndent}const ${name} = ${value};`);
+		}
+		// Side-effecting expression statements (everything except the last).
+		for (let i = 0; i < stmts.length - 1; i++) {
+			const s = stmts[i];
+			if (s.type === "ExprStmt") {
+				bodyLines.push(`${bodyIndent}${this.generateExpression(s.expr)};`);
+			}
+		}
+		// Implicit return: the value of the last statement.
+		const last = stmts[stmts.length - 1];
+		const returnStr = last.type === "Definition" ? last.name : this.generateExpression(last.expr);
+		bodyLines.push(`${bodyIndent}return ${returnStr};`);
+		this.currentLocals = prevLocals;
+		this.blockDepth = prevDepth;
+
+		const paramStr = implicitArgs.length === 0 ? "()" : implicitArgs.length === 1 ? implicitArgs[0] : `(${implicitArgs.join(", ")})`;
+		return `${paramStr} => {\n${bodyLines.join("\n")}\n${closeIndent}}`;
 	}
 
 	generateExpression(expr) {
@@ -1150,58 +1160,66 @@ export class Generator {
 			return `${items}.reduce((acc, ${expr.var}) => acc * ${body}, 1)`;
 		}
 
+		if (expr.type === "Block") {
+			return this.generateBlockExpression(expr, this.currentLocals);
+		}
+
 		throw new Error(`Unknown expression type: ${expr.type}`);
 	}
 
-	collectImplicitVars(expr) {
+	collectImplicitVars(expr, enclosingLocals = new Set()) {
 		const greekLetters = /^[α-ω](_[0-9a-zA-Z]+)?$/;
 
-		if (expr.type === "Variable" && greekLetters.test(expr.name)) {
+		if (expr.type === "Variable" && greekLetters.test(expr.name) && !enclosingLocals.has(expr.name)) {
 			this.usedImplicitVars.add(expr.name);
 		} else if (expr.type === "ArrowFunction") {
 			const tempGen = new Generator({ body: [] });
-			tempGen.collectImplicitVars(expr.body);
+			tempGen.collectImplicitVars(expr.body, enclosingLocals);
 			tempGen.usedImplicitVars.forEach(v => {
 				if (!expr.params.includes(v)) {
 					this.usedImplicitVars.add(v);
 				}
 			});
 		} else if (expr.type === "UnaryOp") {
-			this.collectImplicitVars(expr.argument);
+			this.collectImplicitVars(expr.argument, enclosingLocals);
 		} else if (expr.type === "BinaryOp") {
-			this.collectImplicitVars(expr.left);
-			this.collectImplicitVars(expr.right);
+			this.collectImplicitVars(expr.left, enclosingLocals);
+			this.collectImplicitVars(expr.right, enclosingLocals);
 		} else if (expr.type === "ChainComparison") {
 			expr.comparisons.forEach((c) => {
-				this.collectImplicitVars(c.left);
-				this.collectImplicitVars(c.right);
+				this.collectImplicitVars(c.left, enclosingLocals);
+				this.collectImplicitVars(c.right, enclosingLocals);
 			});
 		} else if (expr.type === "Range") {
-			this.collectImplicitVars(expr.start);
-			this.collectImplicitVars(expr.end);
+			this.collectImplicitVars(expr.start, enclosingLocals);
+			this.collectImplicitVars(expr.end, enclosingLocals);
 		} else if (expr.type === "MemberAccess") {
-			this.collectImplicitVars(expr.object);
+			this.collectImplicitVars(expr.object, enclosingLocals);
 		} else if (expr.type === "IndexAccess") {
-			this.collectImplicitVars(expr.object);
-			this.collectImplicitVars(expr.index);
+			this.collectImplicitVars(expr.object, enclosingLocals);
+			this.collectImplicitVars(expr.index, enclosingLocals);
 		} else if (expr.type === "FunctionCall") {
-			this.collectImplicitVars(expr.callee);
-			expr.args.forEach((arg) => this.collectImplicitVars(arg));
+			this.collectImplicitVars(expr.callee, enclosingLocals);
+			expr.args.forEach((arg) => this.collectImplicitVars(arg, enclosingLocals));
 		} else if (expr.type === "Pipeline") {
-			this.collectImplicitVars(expr.input);
-			this.collectImplicitVars(expr.func);
+			this.collectImplicitVars(expr.input, enclosingLocals);
+			this.collectImplicitVars(expr.func, enclosingLocals);
 		} else if (expr.type === "Quantifier") {
 			// The collection is evaluated in the outer scope, so collect its implicit vars normally.
-			this.collectImplicitVars(expr.collection);
+			this.collectImplicitVars(expr.collection, enclosingLocals);
 			// The bound variable shadows the outer scope inside the body: exclude it,
 			// but still collect any other implicit vars referenced by the body.
 			const tempGen = new Generator({ body: [] });
-			tempGen.collectImplicitVars(expr.body);
+			tempGen.collectImplicitVars(expr.body, enclosingLocals);
 			tempGen.usedImplicitVars.forEach((v) => {
 				if (v !== expr.var) {
 					this.usedImplicitVars.add(v);
 				}
 			});
+		} else if (expr.type === "Block") {
+			// A nested block is self-contained: its own definitions shadow enclosing
+			// locals, and its implicit arguments are computed when it is generated.
+			// Nothing is contributed to the enclosing scope here.
 		}
 	}
 }
