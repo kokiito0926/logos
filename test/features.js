@@ -93,3 +93,56 @@ test("F.11: 床・天井の混在の実行時評価", () => {
 test("F.12: 床関数の定数の実行時評価", () => {
   assert.equal(runValue('r ≔ ⌊3.7⌋', 'r'), 3);
 });
+
+// ===== Test Group: 階乗 (Factorial !) =====
+test("G.1: 定数の階乗 5! は factorial(5) に変換（プレリュード付き）", () => {
+  const js = compile('r ≔ 5!');
+  assert.ok(js.startsWith('// Logos factorial runtime'));
+  assert.ok(js.includes('function factorial('));
+  assert.ok(js.endsWith('const r = factorial(5);'));
+});
+test("G.2: ギリシャ変数の階乗 α! は α => factorial(α) に変換", () => {
+  assert.ok(compile('f ≔ α!').endsWith('const f = α => factorial(α);'));
+});
+test("G.3: 括弧付き式の階乗 (α + 1)! は factorial((α + 1)) に変換", () => {
+  assert.ok(compile('r ≔ (α + 1)!').endsWith('const r = α => factorial((α + 1));'));
+});
+test("G.4: 階乗と加算の混在 α! + 1 は (factorial(α) + 1) に変換", () => {
+  assert.ok(compile('r ≔ α! + 1').endsWith('const r = α => (factorial(α) + 1);'));
+});
+test("G.5: 二重階乗 5!! は factorial(factorial(5)) にネスト", () => {
+  assert.ok(compile('r ≔ 5!!').endsWith('const r = factorial(factorial(5));'));
+});
+test("G.6: 二つの階乗 5! + 2! は (factorial(5) + factorial(2)) に変換", () => {
+  assert.ok(compile('x ≔ 5! + 2!').endsWith('const x = (factorial(5) + factorial(2));'));
+});
+test("G.7: 定数の階乗の実行時評価（5! = 120, 0! = 1, 1! = 1）", () => {
+  assert.equal(runValue('r ≔ 5!', 'r'), 120);
+  assert.equal(runValue('r ≔ 0!', 'r'), 1);
+  assert.equal(runValue('r ≔ 1!', 'r'), 1);
+});
+test("G.8: 関数定義の階乗の実行時評価（f(5) = 120, f(0) = 1）", () => {
+  const f = runValue('f ≔ α!', 'f');
+  assert.equal(f(5), 120);
+  assert.equal(f(0), 1);
+});
+test("G.9: 二重階乗の実行時評価（3!! = 720）", () => {
+  assert.equal(runValue('r ≔ 3!!', 'r'), 720);
+});
+test("G.10: 混在式の実行時評価（5! + 2! = 122）", () => {
+  assert.equal(runValue('x ≔ 5! + 2!', 'x'), 122);
+});
+test("G.11: 複合式の階乗の実行時評価（(α + 1)! で α=4 なら 120）", () => {
+  const r = runValue('r ≔ (α + 1)!', 'r', ['α']);
+  assert.equal(r(4), 120);
+});
+test("G.12: 負数の階乗は例外を投げる", () => {
+  const f = runValue('f ≔ α!', 'f');
+  assert.throws(() => f(-1));
+});
+test("G.13: 階乗を使わないときはプレリュードが付かない", () => {
+  assert.ok(!compile('x ≔ 1').includes('function factorial('));
+});
+test("G.14: 優先順位（α²! は factorial((α ** 2))）", () => {
+  assert.ok(compile('r ≔ α²!').endsWith('const r = α => factorial((α ** 2));'));
+});

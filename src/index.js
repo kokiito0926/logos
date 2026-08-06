@@ -98,6 +98,14 @@ function contour(f, n = 2000) {
     return cmul(sum, h / 3);
 }
 `;
+const FACTORIAL_PRELUDE = `// Logos factorial runtime (generated because ! is used)
+function factorial(n) {
+    if (!Number.isInteger(n) || n < 0) throw new Error("factorial: argument must be a non-negative integer");
+    let r = 1;
+    for (let i = 2; i <= n; i++) r *= i;
+    return r;
+}
+`;
 
 
 /**
@@ -482,6 +490,7 @@ export class Lexer {
 				"⌋": "FLOOR_CLOSE",
 				"⌈": "CEIL_OPEN",
 				"⌉": "CEIL_CLOSE",
+				"!": "FACTORIAL",
 			};
 
 			// Track bracket depth so newlines inside parens/brackets are insignificant.
@@ -930,6 +939,13 @@ export class Parser {
 			left = { type: "BinaryOp", op: "**", left, right };
 		}
 
+		// Postfix factorial on the whole exponentiation result: `α²!` → factorial(α²).
+		// (`5!` is consumed by parsePostfix; only `!` directly after `²`/`³`/`^`/`⁴`… reaches here.)
+		while (this.match("FACTORIAL")) {
+			this.advance();
+			left = { type: "FunctionCall", callee: { type: "Variable", name: "factorial" }, args: [left] };
+		}
+
 		return left;
 	}
 
@@ -982,6 +998,10 @@ export class Parser {
 				// Prime notation: f′ → first derivative, f″ → second derivative.
 				const prime = this.advance();
 				expr = { type: "Prime", expr, order: prime.type === "DOUBLE_PRIME" ? 2 : 1 };
+			} else if (this.match("FACTORIAL")) {
+				// Postfix factorial: n! → factorial(n), n!! → factorial(factorial(n))
+				this.advance();
+				expr = { type: "FunctionCall", callee: { type: "Variable", name: "factorial" }, args: [expr] };
 			} else {
 				break;
 			}
@@ -1447,6 +1467,7 @@ export class Generator {
 		// calculus runtime prelude is prepended to the output.
 		this.usesCalculus = false;
 		this.usesComplex = false;
+		this.usesFactorial = false;
 		// True while generating a contour-integral integrand, so arithmetic
 		// operators are rewritten to complex-number function calls.
 		this.complexMode = false;
@@ -1460,7 +1481,8 @@ export class Generator {
 		const body = statements.join("\n");
 		const prelude =
 			(this.usesCalculus ? CALCULUS_PRELUDE : "") +
-			(this.usesComplex ? COMPLEX_PRELUDE : "");
+			(this.usesComplex ? COMPLEX_PRELUDE : "") +
+			(this.usesFactorial ? FACTORIAL_PRELUDE : "");
 		return `${prelude}${body}`;
 	}
 
@@ -1739,6 +1761,9 @@ export class Generator {
 				if (complexMath[expr.callee.name]) {
 					callee = complexMath[expr.callee.name];
 				}
+			}
+			if (expr.callee && expr.callee.type === "Variable" && expr.callee.name === "factorial") {
+				this.usesFactorial = true;
 			}
 			const args = expr.args.map((arg) => this.generateExpression(arg)).join(", ");
 			return `${callee}(${args})`;
