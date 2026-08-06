@@ -64,7 +64,7 @@ function gradient(f, h = 1e-6) {
     });
 }
 `;
-const COMPLEX_PRELUDE = `// Logos complex-number runtime (generated because ∮ is used)
+const COMPLEX_PRELUDE = `// Logos complex-number runtime (generated because complex numbers are used)
 function C(x) { return typeof x === "number" ? { re: x, im: 0 } : x; }
 function cre(z) { return C(z).re; }
 function cim(z) { return C(z).im; }
@@ -1060,6 +1060,10 @@ export class Parser {
 
 		if (token.type === "NUMBER") {
 			this.advance();
+			if (this.peek().type === "IDENT" && this.peek().value === "i") {
+				this.advance();
+				return { type: "ComplexLiteral", re: 0, im: token.value };
+			}
 			return { type: "Literal", value: token.value };
 		}
 
@@ -1124,6 +1128,9 @@ export class Parser {
 			this.advance();
 			if (value === "π") {
 				return { type: "Constant", name: "π" };
+			}
+			if (value === "i") {
+				return { type: "ComplexLiteral", re: 0, im: 1 };
 			}
 			return { type: "Variable", name: value };
 		}
@@ -1277,6 +1284,17 @@ const BUILTIN_MATH_FUNCS = {
 	ln: "Math.log",
 	sqrt: "Math.sqrt",
 };
+
+function containsComplex(node) {
+	if (!node || typeof node !== "object") return false;
+	if (node.type === "ComplexLiteral" || node.type === "ContourIntegral") return true;
+	return Object.keys(node).some((k) => {
+		if (k === "type") return false;
+		const v = node[k];
+		if (Array.isArray(v)) return v.some(containsComplex);
+		return containsComplex(v);
+	});
+}
 
 function sameNode(a, b) {
 	if (a.type !== b.type) return false;
@@ -1696,6 +1714,11 @@ export class Generator {
 			return typeof expr.value === "string" ? JSON.stringify(expr.value) : String(expr.value);
 		}
 
+		if (expr.type === "ComplexLiteral") {
+			this.usesComplex = true;
+			return `{ re: ${expr.re}, im: ${expr.im} }`;
+		}
+
 		if (expr.type === "Variable") {
 			return expr.name;
 		}
@@ -1723,7 +1746,7 @@ export class Generator {
 
 		if (expr.type === "UnaryOp") {
 			if (expr.op === "-") {
-				if (this.complexMode) {
+				if (this.complexMode || containsComplex(expr.argument)) {
 					return `cneg(${this.generateExpression(expr.argument)})`;
 				}
 				return `(-${this.generateExpression(expr.argument)})`;
@@ -1743,7 +1766,7 @@ export class Generator {
 			// Standalone operations stay bare (`α²` → cpow(α, 2)); nested
 			// operations are parenthesized to keep the source shape
 			// (`1/(α-2)` → (cdiv(1, (csub(α, 2))))).
-			if (this.complexMode && ["+", "-", "*", "/", "**"].includes(expr.op)) {
+			if ((this.complexMode || containsComplex(expr.left) || containsComplex(expr.right)) && ["+", "-", "*", "/", "**"].includes(expr.op)) {
 				const complexOp = { "+": "cadd", "-": "csub", "*": "cmul", "/": "cdiv", "**": "cpow" }[expr.op];
 				const nested = this.complexDepth > 0;
 				this.complexDepth++;
@@ -1823,7 +1846,7 @@ export class Generator {
 			}
 			// Complex mode: sin/cos/exp/ln/sqrt become their complex analogues.
 			// `√α` parses with callee name "Math.sqrt", so map both spellings.
-			if (this.complexMode && expr.callee && expr.callee.type === "Variable") {
+			if ((this.complexMode || (expr.callee && expr.callee.type === "Variable" && expr.args.some((a) => containsComplex(a)))) && expr.callee.type === "Variable") {
 				const complexMath = { sin: "csin", cos: "ccos", exp: "cexp", ln: "clog", sqrt: "csqrt", "Math.sqrt": "csqrt" };
 				if (complexMath[expr.callee.name]) {
 					callee = complexMath[expr.callee.name];

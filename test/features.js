@@ -258,3 +258,75 @@ test("I.17: 改行エスケープの実行時評価", () => {
 test("I.18: 閉じていない文字列はコンパイルエラー", () => {
   assert.throws(() => compile('s ≔ "abc'));
 });
+
+// ===== Test Group: 複素数リテラル (Complex Number Literals) =====
+test("J.1: 虚数単位 i は { re: 0, im: 1 } に変換", () => {
+  assert.ok(compile('z ≔ i').endsWith('const z = { re: 0, im: 1 };'));
+});
+test("J.2: 純虚数 3i は { re: 0, im: 3 } に変換", () => {
+  assert.ok(compile('z ≔ 3i').endsWith('const z = { re: 0, im: 3 };'));
+});
+test("J.3: 複素数 2 + 3i は cadd(2, { re: 0, im: 3 }) に変換", () => {
+  assert.ok(compile('z ≔ 2 + 3i').endsWith('const z = cadd(2, { re: 0, im: 3 });'));
+});
+test("J.4: 複素数 2 - 3i は csub(2, { re: 0, im: 3 }) に変換", () => {
+  assert.ok(compile('z ≔ 2 - 3i').endsWith('const z = csub(2, { re: 0, im: 3 });'));
+});
+test("J.5: 負の純虚数 -3i は cneg({ re: 0, im: 3 }) に変換", () => {
+  assert.ok(compile('z ≔ -3i').endsWith('const z = cneg({ re: 0, im: 3 });'));
+});
+test("J.6: i² は cpow({ re: 0, im: 1 }, 2) に変換", () => {
+  assert.ok(compile('z ≔ i²').endsWith('const z = cpow({ re: 0, im: 1 }, 2);'));
+});
+test("J.7: i の実行時評価は { re: 0, im: 1 }", () => {
+  assert.deepEqual(runValue('z ≔ i', 'z'), { re: 0, im: 1 });
+});
+test("J.8: 2 + 3i の実行時評価は { re: 2, im: 3 }", () => {
+  assert.deepEqual(runValue('z ≔ 2 + 3i', 'z'), { re: 2, im: 3 });
+});
+test("J.9: 2 - 3i の実行時評価は { re: 2, im: -3 }", () => {
+  assert.deepEqual(runValue('z ≔ 2 - 3i', 'z'), { re: 2, im: -3 });
+});
+test("J.10: -3i の実行時評価は { re: 0, im: -3 }", () => {
+  const z = runValue('z ≔ -3i', 'z');
+  // cneg(0) は JS の -0 になるため、実部は 1e-9 の許容差で検証する
+  assert.ok(Math.abs(z.re) < 1e-9 && Math.abs(z.im + 3) < 1e-9);
+});
+test("J.11: i² の実行時評価は { re: -1, im: 0 }", () => {
+  assert.deepEqual(runValue('z ≔ i²', 'z'), { re: -1, im: 0 });
+});
+test("J.12: 複素数同士の積 (2 + 3i) * (1 - 2i) は { re: 8, im: -1 }", () => {
+  assert.deepEqual(runValue('z ≔ (2 + 3i) * (1 - 2i)', 'z'), { re: 8, im: -1 });
+});
+test("J.13: cre(2 + 3i) の実行時評価は 2", () => {
+  assert.equal(runValue('r ≔ cre(2 + 3i)', 'r'), 2);
+});
+test("J.14: cim(2 + 3i) の実行時評価は 3", () => {
+  assert.equal(runValue('m ≔ cim(2 + 3i)', 'm'), 3);
+});
+test("J.15: ギリシャ暗黙引数と i の和 f(1) は { re: 1, im: 1 }", () => {
+  const f = runValue('f ≔ i + α', 'f');
+  assert.deepEqual(f(1), { re: 1, im: 1 });
+});
+test("J.16: √i の実行時評価は (1 + i) / √2 に近い", () => {
+  const z = runValue('z ≔ √i', 'z');
+  assert.ok(Math.abs(z.re - Math.SQRT1_2) < 1e-9 && Math.abs(z.im - Math.SQRT1_2) < 1e-9);
+});
+test("J.17: i⁻¹ の実行時評価は -i に近い", () => {
+  assert.ok(Math.abs(runValue('z ≔ i⁻¹', 'z').im + 1) < 1e-9);
+});
+test("J.18: 1 / i の実行時評価は { re: 0, im: -1 }", () => {
+  assert.deepEqual(runValue('z ≔ 1 / i', 'z'), { re: 0, im: -1 });
+});
+test("J.19: 複素数を使うと複素数プレリュードが付く", () => {
+  assert.ok(compile('z ≔ i').startsWith('// Logos complex-number runtime'));
+});
+test("J.20: 通常の数値 5 は複素数変換されない", () => {
+  assert.ok(compile('x ≔ 5').endsWith('const x = 5;'));
+});
+test("J.21: 文字列 \"i\" は複素数変換されない", () => {
+  assert.ok(compile('s ≔ "i"').endsWith('const s = "i";'));
+});
+test("J.22: 文字列 \"a # b\" の # はリテラル文字のまま", () => {
+  assert.ok(compile('s ≔ "a # b"').endsWith('const s = "a # b";'));
+});
