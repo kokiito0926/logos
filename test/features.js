@@ -146,3 +146,58 @@ test("G.13: 階乗を使わないときはプレリュードが付かない", ()
 test("G.14: 優先順位（α²! は factorial((α ** 2))）", () => {
   assert.ok(compile('r ≔ α²!').endsWith('const r = α => factorial((α ** 2));'));
 });
+
+// ===== Test Group: 集合の内包表記 (Set Comprehension) =====
+test("H.1: 恒等写像 { x | x ∈ S } は new Set([...S].map(x => x)) に変換", () => {
+  assert.ok(compile('s ≔ { x | x ∈ S }').endsWith('const s = new Set([...S].map(x => x));'));
+});
+test("H.2: 二乗の本体 { x² | x ∈ S } は new Set([...S].map(x => (x ** 2))) に変換", () => {
+  assert.ok(compile('s ≔ { x² | x ∈ S }').endsWith('const s = new Set([...S].map(x => (x ** 2)));'));
+});
+test("H.3: ギリシャ束縛変数＋ギリシャ集合は暗黙引数（{ α² | α ∈ β } → β => …）", () => {
+  assert.ok(compile('s ≔ { α² | α ∈ β }').endsWith('const s = β => new Set([...β].map(α => (α ** 2)));'));
+});
+test("H.4: 外側のギリシャ変数を捕捉、束縛変数は局所（{ x + γ | x ∈ S } → γ => …）", () => {
+  assert.ok(compile('s ≔ { x + γ | x ∈ S }').endsWith('const s = γ => new Set([...S].map(x => (x + γ)));'));
+});
+test("H.5: 算術本体 { x + 1 | x ∈ S } は new Set([...S].map(x => (x + 1))) に変換", () => {
+  assert.ok(compile('s ≔ { x + 1 | x ∈ S }').endsWith('const s = new Set([...S].map(x => (x + 1)));'));
+});
+test("H.6: 配列入力の実行時評価（[1,2,3,4] → {1,4,9,16}）", () => {
+  const js = compile('s ≔ { x² | x ∈ S }');
+  const s = new Function('S', js + '; return s;')([1, 2, 3, 4]);
+  assert.ok(s instanceof Set);
+  assert.deepEqual([...s], [1, 4, 9, 16]);
+});
+test("H.7: Set入力の実行時評価（{2,3,5} → {4,9,25}）", () => {
+  const js = compile('s ≔ { x² | x ∈ S }');
+  const s = new Function('S', js + '; return s;')(new Set([2, 3, 5]));
+  assert.ok(s instanceof Set);
+  assert.deepEqual([...s].sort((a, b) => a - b), [4, 9, 25]);
+});
+test("H.8: 空のコレクションは空の Set を返す（サイズ0）", () => {
+  const js = compile('s ≔ { x² | x ∈ S }');
+  const s = new Function('S', js + '; return s;')([]);
+  assert.ok(s instanceof Set);
+  assert.equal(s.size, 0);
+});
+test("H.9: 束縛変数の影付け実行時評価（f([1,2,3]) = {1,4,9}）", () => {
+  const f = runValue('f ≔ { α² | α ∈ β }', 'f');
+  assert.ok(typeof f === 'function');
+  const r = f([1, 2, 3]);
+  assert.ok(r instanceof Set);
+  assert.deepEqual([...r].sort((a, b) => a - b), [1, 4, 9]);
+});
+test("H.10: 空集合リテラル ∅ は影響を受けない", () => {
+  assert.equal(compile('y ≔ ∅'), 'const y = new Set();');
+});
+test("H.11: パイプライン |> は影響を受けない", () => {
+  assert.equal(compile('z ≔ x |> f'), 'const z = f(x);');
+});
+test("H.12: ネストした内包表記 { { y | y ∈ x } | x ∈ S }", () => {
+  assert.ok(
+    compile('s ≔ { { y | y ∈ x } | x ∈ S }').endsWith(
+      'const s = new Set([...S].map(x => new Set([...x].map(y => y))));'
+    )
+  );
+});

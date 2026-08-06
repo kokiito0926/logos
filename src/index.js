@@ -135,6 +135,13 @@ function collectInnerRefs(expr, innerNames) {
 			walk(node.body, nextBound);
 			return;
 		}
+		if (node.type === "SetComprehension") {
+			const nextBound = new Set(bound);
+			nextBound.add(node.var);
+			walk(node.collection, bound);
+			walk(node.body, nextBound);
+			return;
+		}
 		if (node.type === "Iverson") {
 			walk(node.expr, bound);
 			return;
@@ -491,6 +498,9 @@ export class Lexer {
 				"⌈": "CEIL_OPEN",
 				"⌉": "CEIL_CLOSE",
 				"!": "FACTORIAL",
+				"{": "LBRACE",
+				"}": "RBRACE",
+				"|": "VBAR",
 			};
 
 			// Track bracket depth so newlines inside parens/brackets are insignificant.
@@ -1050,6 +1060,18 @@ export class Parser {
 			const expr = this.parseExpression();
 			this.expect("CEIL_CLOSE");
 			return { type: "FunctionCall", callee: { type: "Variable", name: "Math.ceil" }, args: [expr] };
+		}
+
+		// Set comprehension: { body | x ∈ S } → new Set([...S].map(x => body))
+		if (token.type === "LBRACE") {
+			this.advance();
+			const body = this.parseExpression();
+			this.expect("VBAR");
+			const boundVar = this.expect("IDENT").value;
+			this.expect("IN");
+			const collection = this.parseExpression();
+			this.expect("RBRACE");
+			return { type: "SetComprehension", var: boundVar, collection, body };
 		}
 
 		if (token.type === "EMPTYSET") {
@@ -1813,6 +1835,12 @@ export class Generator {
 			return `${items}.reduce((acc, ${expr.var}) => acc * ${body}, 1)`;
 		}
 
+		if (expr.type === "SetComprehension") {
+			const collection = this.generateExpression(expr.collection);
+			const body = this.generateExpression(expr.body);
+			return `new Set([...${collection}].map(${expr.var} => ${body}))`;
+		}
+
 		if (expr.type === "Block") {
 			return this.generateBlockExpression(expr, this.currentLocals);
 		}
@@ -2091,6 +2119,16 @@ export class Generator {
 			this.collectImplicitVars(expr.collection, enclosingLocals);
 			// The bound variable shadows the outer scope inside the body: exclude it,
 			// but still collect any other implicit vars referenced by the body.
+			const tempGen = new Generator({ body: [] });
+			tempGen.collectImplicitVars(expr.body, enclosingLocals);
+			tempGen.usedImplicitVars.forEach((v) => {
+				if (v !== expr.var) {
+					this.usedImplicitVars.add(v);
+				}
+			});
+		} else if (expr.type === "SetComprehension") {
+			// Collection is evaluated in the outer scope; the bound var is local to the body.
+			this.collectImplicitVars(expr.collection, enclosingLocals);
 			const tempGen = new Generator({ body: [] });
 			tempGen.collectImplicitVars(expr.body, enclosingLocals);
 			tempGen.usedImplicitVars.forEach((v) => {
