@@ -201,3 +201,60 @@ test("H.12: ネストした内包表記 { { y | y ∈ x } | x ∈ S }", () => {
     )
   );
 });
+
+// ===== Test Group: 文字列リテラル (String Literals) =====
+test("I.1: ダブルクォート文字列", () => {
+  assert.equal(compile('s ≔ "hello"'), 'const s = "hello";');
+});
+test("I.2: シングルクォート文字列はダブルクォートに正規化", () => {
+  assert.equal(compile("s ≔ 'hi'"), 'const s = "hi";');
+});
+test("I.3: 改行エスケープ \\n は保持される", () => {
+  assert.equal(compile('s ≔ "a\\nb"'), 'const s = "a\\nb";');
+});
+test("I.4: タブエスケープ \\t は保持される", () => {
+  assert.equal(compile('s ≔ "a\\tb"'), 'const s = "a\\tb";');
+});
+test("I.5: バックスラッシュエスケープ \\\\ は保持される", () => {
+  assert.equal(compile('s ≔ "a\\\\b"'), 'const s = "a\\\\b";');
+});
+test("I.6: 文字列内のエスケープされた引用符", () => {
+  assert.equal(compile('s ≔ "he said \\"hi\\""'), 'const s = "he said \\"hi\\"";');
+});
+test("I.7: ユニコードエスケープ \\u0041 は A に変換", () => {
+  assert.equal(compile('s ≔ "\\u0041"'), 'const s = "A";');
+});
+test("I.8: 文字列の内容は暗黙引数にならない", () => {
+  assert.equal(compile('s ≔ "αβγ"'), 'const s = "αβγ";');
+});
+test("I.9: 文字列内の # はリテラル文字", () => {
+  assert.equal(compile('s ≔ "a # b"'), 'const s = "a # b";');
+});
+test("I.10: 文字列の連結は定数畳み込みされない", () => {
+  assert.equal(compile('s ≔ "hello " + "world"'), 'const s = ("hello " + "world");');
+});
+test("I.11: ギリシャ変数と文字列の連結", () => {
+  assert.equal(compile('f ≔ α + "!"'), 'const f = α => (α + "!");');
+});
+test("I.12: 文字列の等価比較", () => {
+  assert.equal(compile('eq ≔ "a" = "a"'), 'const eq = ("a" === "a");');
+});
+test("I.13: 文字列へのインデックスアクセス", () => {
+  assert.equal(compile('c ≔ "abc"[0]'), 'const c = "abc"[0];');
+});
+test("I.14: 文字列リテラルの実行時評価", () => {
+  assert.equal(runValue('s ≔ "hello"', 's'), "hello");
+});
+test("I.15: 文字列連結の実行時評価", () => {
+  assert.equal(runValue('s ≔ "hello " + "world"', 's'), "hello world");
+});
+test("I.16: 文字列連結関数の実行時評価", () => {
+  const f = runValue('f ≔ α + "!"', 'f');
+  assert.equal(f('hi'), 'hi!');
+});
+test("I.17: 改行エスケープの実行時評価", () => {
+  assert.equal(runValue('s ≔ "a\\nb"', 's'), "a\nb");
+});
+test("I.18: 閉じていない文字列はコンパイルエラー", () => {
+  assert.throws(() => compile('s ≔ "abc'));
+});

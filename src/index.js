@@ -342,6 +342,41 @@ export class Lexer {
 				continue;
 			}
 
+			// String literals: "…" or '…', with backslash escapes. `#` inside quotes is literal text.
+			if (char === '"' || char === "'") {
+				const quote = this.advance();
+				let s = "";
+				let closed = false;
+				while (this.pos < this.input.length) {
+					const c = this.peek();
+					if (c === quote) {
+						this.advance();
+						closed = true;
+						break;
+					}
+					if (c === "\\") {
+						this.advance();
+						const esc = this.peek();
+						this.advance();
+						const simple = { n: "\n", t: "\t", r: "\r", "\\": "\\", '"': '"', "'": "'", "0": "\0", b: "\b", f: "\f" };
+						if (esc === "u") {
+							let hex = "";
+							while (hex.length < 4 && this.pos < this.input.length && /[0-9a-fA-F]/.test(this.peek())) {
+								hex += this.advance();
+							}
+							s += String.fromCharCode(parseInt(hex || "0", 16));
+						} else {
+							s += simple[esc] ?? esc;  // unknown escapes keep the char literally (JS behavior)
+						}
+					} else {
+						s += this.advance();
+					}
+				}
+				if (!closed) throw new Error("Unterminated string literal");
+				tokens.push({ type: "STRING", value: s });
+				continue;
+			}
+
 			// Superscript numbers / signs (e.g. ⁻¹, ⁴, ¹⁰)
 			if (/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]/.test(char)) {
 				let superStr = "";
@@ -1028,6 +1063,11 @@ export class Parser {
 			return { type: "Literal", value: token.value };
 		}
 
+		if (token.type === "STRING") {
+			this.advance();
+			return { type: "Literal", value: token.value };
+		}
+
 		if (token.type === "TRUE") {
 			this.advance();
 			return { type: "Literal", value: true };
@@ -1434,6 +1474,11 @@ function simplifyExpr(node) {
 		const left = simplifyExpr(node.left);
 		const right = simplifyExpr(node.right);
 		const op = node.op;
+		// String literals must not be algebraically folded (e.g. "a" + 0 is "a0", not "a").
+		if ((left.type === "Literal" && typeof left.value === "string") ||
+			(right.type === "Literal" && typeof right.value === "string")) {
+			return { type: "BinaryOp", op, left, right };
+		}
 		// Constant folding for arithmetic literals.
 		if (left.type === "Literal" && right.type === "Literal" && ["+", "-", "*", "/", "**"].includes(op)) {
 			const a = left.value;
@@ -1648,7 +1693,7 @@ export class Generator {
 
 	generateExpression(expr) {
 		if (expr.type === "Literal") {
-			return String(expr.value);
+			return typeof expr.value === "string" ? JSON.stringify(expr.value) : String(expr.value);
 		}
 
 		if (expr.type === "Variable") {
