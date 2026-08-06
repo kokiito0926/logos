@@ -1,0 +1,95 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { LogosCompiler } from '../src/index.js';
+
+// Compile a Logos snippet to JS.
+function compile(code) {
+  return new LogosCompiler().compile(code);
+}
+
+// Compile `code`, then evaluate the definition `name` and return its value.
+// For a function definition this yields the function itself; for a constant
+// definition it yields the constant.
+function runValue(code, name, params = []) {
+  const js = compile(code);
+  const f = new Function(...params, js + `; return ${name};`);
+  return f();
+}
+
+// ===== Test Group: 行コメント (# Comment) =====
+test("C.1: インラインコメントは無視される", () => {
+  assert.equal(compile('x ≔ 1 # 説明'), 'const x = 1;');
+});
+test("C.2: インラインコメント＋末尾改行", () => {
+  assert.equal(compile('x ≔ 1 # 説明\n'), 'const x = 1;');
+});
+test("C.3: 定義間にコメントのみの行", () => {
+  assert.equal(compile('x ≔ 1\n# コメント\nb ≔ 2'), 'const x = 1;\nconst b = 2;');
+});
+test("C.4: EOF直前のコメント（末尾改行なし）", () => {
+  assert.equal(compile('x ≔ 1\n# done'), 'const x = 1;');
+});
+test("C.5: ブロック内のコメントのみの行（単一式ブロックは展開）", () => {
+  assert.equal(compile('f ≔\n    # コメント\n    α + 1'), 'const f = α => (α + 1);');
+});
+test("C.6: ブロック内定義後のインラインコメント", () => {
+  assert.equal(
+    compile('f ≔\n    γ ≔ α + 1  # 途中\n    γ'),
+    'const f = α => {\n    const γ = (α + 1);\n    return γ;\n};'
+  );
+});
+test("C.7: 括弧内のコメント（括弧内の改行は無意味）", () => {
+  assert.equal(compile('g ≔ (α + # コメント\n    β)'), 'const g = (α, β) => (α + β);');
+});
+test("C.8: コメント付き定義の実行時評価", () => {
+  assert.equal(new Function(compile('x ≔ 1 # 説明') + '; return x;')(), 1);
+});
+
+// ===== Test Group: 床関数・天井関数 (Floor & Ceiling) =====
+test("F.1: 床関数 ⌊α⌋ は Math.floor に変換", () => {
+  assert.equal(compile('f ≔ ⌊α⌋'), 'const f = α => Math.floor(α);');
+});
+test("F.2: 天井関数 ⌈α⌉ は Math.ceil に変換", () => {
+  assert.equal(compile('c ≔ ⌈α⌉'), 'const c = α => Math.ceil(α);');
+});
+test("F.3: 床関数の複合引数", () => {
+  assert.equal(compile('r ≔ ⌊α + β⌋'), 'const r = (α, β) => Math.floor((α + β));');
+});
+test("F.4: 床関数の定数", () => {
+  assert.equal(compile('r ≔ ⌊3.7⌋'), 'const r = Math.floor(3.7);');
+});
+test("F.5: 天井関数の定数", () => {
+  assert.equal(compile('r ≔ ⌈2.1⌉'), 'const r = Math.ceil(2.1);');
+});
+test("F.6: 算術との混在", () => {
+  assert.equal(compile('r ≔ ⌊α⌋ + ⌈β⌉'), 'const r = (α, β) => (Math.floor(α) + Math.ceil(β));');
+});
+test("F.7: べき乗式への床関数", () => {
+  assert.equal(compile('r ≔ ⌊α²⌋'), 'const r = α => Math.floor((α ** 2));');
+});
+test("F.8: 床関数の実行時評価", () => {
+  const f = runValue('f ≔ ⌊α⌋', 'f');
+  assert.equal(typeof f, 'function');
+  assert.equal(f(3.7), 3);
+  assert.equal(f(-1.2), -2);
+  assert.equal(f(4), 4);
+});
+test("F.9: 天井関数の実行時評価", () => {
+  const c = runValue('c ≔ ⌈α⌉', 'c');
+  assert.equal(typeof c, 'function');
+  assert.equal(c(3.2), 4);
+  assert.equal(c(-1.2), -1);
+  assert.equal(c(4), 4);
+});
+test("F.10: 床関数の複合引数の実行時評価", () => {
+  const r = runValue('r ≔ ⌊α + β⌋', 'r', ['α', 'β']);
+  assert.equal(r(2.5, 1.2), 3);
+});
+test("F.11: 床・天井の混在の実行時評価", () => {
+  const r = runValue('r ≔ ⌊α⌋ + ⌈β⌉', 'r', ['α', 'β']);
+  // Math.floor(2.7) + Math.ceil(1.2) === 2 + 2 === 4
+  assert.equal(r(2.7, 1.2), 4);
+});
+test("F.12: 床関数の定数の実行時評価", () => {
+  assert.equal(runValue('r ≔ ⌊3.7⌋', 'r'), 3);
+});

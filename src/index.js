@@ -263,6 +263,13 @@ export class Lexer {
 				if (this.pos >= this.input.length) break;
 				// Blank line: does not affect indentation, but emits a NEWLINE below.
 				if (this.peek() === "\r" || this.peek() === "\n") continue;
+				// Comment-only line: like a blank line, does not affect indentation.
+				if (this.peek() === "#") {
+					while (this.pos < this.input.length && this.peek() !== "\r" && this.peek() !== "\n") {
+						this.advance();
+					}
+					continue;
+				}
 
 				const current = indentStack[indentStack.length - 1];
 				if (indent > current) {
@@ -311,6 +318,14 @@ export class Lexer {
 				continue;
 			}
 			const char = this.peek();
+
+			// Line comments: # runs to the end of the line.
+			if (char === "#") {
+				while (this.pos < this.input.length && this.peek() !== "\r" && this.peek() !== "\n") {
+					this.advance();
+				}
+				continue;
+			}
 
 			// Superscript numbers / signs (e.g. ⁻¹, ⁴, ¹⁰)
 			if (/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]/.test(char)) {
@@ -463,11 +478,15 @@ export class Lexer {
 				"″": "DOUBLE_PRIME",
 				"⟦": "IVERSON_OPEN",
 				"⟧": "IVERSON_CLOSE",
+				"⌊": "FLOOR_OPEN",
+				"⌋": "FLOOR_CLOSE",
+				"⌈": "CEIL_OPEN",
+				"⌉": "CEIL_CLOSE",
 			};
 
 			// Track bracket depth so newlines inside parens/brackets are insignificant.
-			if (char === "(" || char === "[" || char === "⟦") this.parenDepth++;
-			if (char === ")" || char === "]" || char === "⟧") this.parenDepth = Math.max(0, this.parenDepth - 1);
+			if (char === "(" || char === "[" || char === "⟦" || char === "⌊" || char === "⌈") this.parenDepth++;
+			if (char === ")" || char === "]" || char === "⟧" || char === "⌋" || char === "⌉") this.parenDepth = Math.max(0, this.parenDepth - 1);
 
 			if (symbolMap[char]) {
 				tokens.push({ type: symbolMap[char], value: this.advance() });
@@ -995,6 +1014,22 @@ export class Parser {
 			const expr = this.parseExpression();
 			this.expect("IVERSON_CLOSE");
 			return { type: "Iverson", expr };
+		}
+
+		// Floor: ⌊x⌋ → Math.floor(x)
+		if (token.type === "FLOOR_OPEN") {
+			this.advance();
+			const expr = this.parseExpression();
+			this.expect("FLOOR_CLOSE");
+			return { type: "FunctionCall", callee: { type: "Variable", name: "Math.floor" }, args: [expr] };
+		}
+
+		// Ceiling: ⌈x⌉ → Math.ceil(x)
+		if (token.type === "CEIL_OPEN") {
+			this.advance();
+			const expr = this.parseExpression();
+			this.expect("CEIL_CLOSE");
+			return { type: "FunctionCall", callee: { type: "Variable", name: "Math.ceil" }, args: [expr] };
 		}
 
 		if (token.type === "EMPTYSET") {
